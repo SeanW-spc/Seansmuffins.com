@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sean’s Muffins — Local Delivery</title>
+  <meta name="description" content="Fresh local muffins with easy Stripe checkout." />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+  <script async src="https://js.stripe.com/v3"></script>
+</head>
+<body>
+  <!-- Header -->
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="index.html">
+        <img class="brand-logo" src="images/logo.png" alt="Sean’s Muffins logo" />
+        <span>Sean’s Muffins</span>
+      </a>
+
+      <!-- Mobile toggle -->
+      <button class="nav-toggle" aria-expanded="false" aria-controls="primary-nav" aria-label="Toggle menu">
+        <span class="bar"></span><span class="bar"></span><span class="bar"></span>
+      </button>
+
+      <nav id="primary-nav" class="nav">
+        <a href="#shop">Shop</a>
+        <a href="#how">How it works</a>
+        <a href="#faq">FAQ</a>
+        <a href="#contact">Contact</a>
+        <a href="about.html">About</a>
+      </nav>
+
+      <!-- Cart button -->
+      <button id="cart-button" class="cart-button" aria-label="Open cart" title="Cart">
+        🧺 <span class="cart-count" id="cart-count">0</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Hero -->
+  <section class="hero parallax" id="top" aria-label="Hero" data-bg="images/hero-bg.jpg">
+    <div class="parallax-bg" aria-hidden="true"></div>
+    <div class="container hero-inner">
+      <div class="hero-copy">
+        <h1>Fresh morning muffins, delivered locally.</h1>
+        <p>Small-batch, baked at dawn. Pick a box, choose your delivery window, and we’ll bring breakfast to you.</p>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="#shop">Shop Muffin Boxes</a>
+          <a class="btn btn-ghost" href="about.html">Read our story</a>
+        </div>
+        <div class="hero-meta">
+          <span>✅ Stripe checkout</span>
+          <span>🚗 Local delivery</span>
+          <span>💌 Satisfaction guaranteed</span>
+        </div>
+      </div>
+      <div class="hero-card">
+        <div class="muffin-stack" aria-hidden="true">
+          <div class="m1"></div><div class="m2"></div><div class="m3"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <main>
+    <!-- How it works -->
+    <section class="section" id="how" aria-label="How it works">
+      <div class="container">
+        <h2 class="section-title">How it works</h2>
+        <div class="steps">
+          <article class="step"><div class="step-icon">🧁</div><h3>Pick a box</h3><p>Choose a one-time box or subscribe for weekly muffins.</p></article>
+          <article class="step"><div class="step-icon">📍</div><h3>Give details</h3><p>Enter your address and a preferred delivery time range at checkout.</p></article>
+          <article class="step"><div class="step-icon">📲</div><h3>Get your ETA</h3><p>We text your ETA after we route all stops—fresh muffins arrive right on time.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Shop -->
+    <section class="section shop" id="shop" aria-label="Shop">
+      <div class="container">
+        <h2 class="section-title">Muffin Boxes</h2>
+
+        <!-- Subscription highlight (Buy Now OR add to cart as 1 quantity—usually subs are buy-now only) -->
+        <article class="product highlight">
+          <div class="product-info">
+            <div class="product-top">
+              <h3>Weekly Muffin Box</h3>
+              <span class="badge">Subscription</span>
+            </div>
+            <p class="product-desc">4 baker’s-choice muffins delivered every week. Cancel anytime.</p>
+            <ul class="bullets"><li>Seasonal favorites</li><li>Skip or cancel anytime</li><li>Stripe secure checkout</li></ul>
+            <div class="buy buy-row">
+              <button class="btn btn-primary" data-buy-now
+                data-price="price_SUBSCRIPTION_REPLACE"
+                data-name="Weekly Muffin Box"
+                data-qty="1">Subscribe Now</button>
+              <button class="btn btn-ghost" data-add
+                data-price="price_SUBSCRIPTION_REPLACE"
+                data-name="Weekly Muffin Box">Add to Cart</button>
+            </div>
+            <p class="hint">Tip: In your Stripe Payment Link or Price → Checkout settings, enable shipping address and custom fields (e.g., “Preferred delivery time range”).</p>
+          </div>
+          <div class="product-art" aria-hidden="true">
+            <div class="box box-a"></div><div class="box box-b"></div>
+          </div>
+        </article>
+
+        <!-- One-time boxes -->
+        <div class="grid">
+          <article class="product card">
+            <div class="thumb-wrap"><img loading="lazy" src="images/blueberry.jpg" alt="Blueberry Muffin Box (4)" class="thumb-img"></div>
+            <div class="product-info">
+              <h3>Blueberry Muffin Box (4)</h3>
+              <p class="product-desc">Juicy blueberries in a soft, buttery crumb.</p>
+              <div class="buy buy-row">
+                <button class="btn btn-primary" data-buy-now data-price="price_BLUEBERRY_REPLACE" data-name="Blueberry Muffin Box (4)" data-qty="1">Buy Now</button>
+                <button class="btn btn-ghost" data-add data-price="price_BLUEBERRY_REPLACE" data-name="Blueberry Muffin Box (4)">Add to Cart</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="product card">
+            <div class="thumb-wrap"><img loading="lazy" src="images/vanilla.jpg" alt="Vanilla Muffin Box (4)" class="thumb-img"></div>
+            <div class="product-info">
+              <h3>Vanilla Muffin Box (4)</h3>
+              <p class="product-desc">Classic vanilla with a delicate, golden top.</p>
+              <div class="buy buy-row">
+                <button class="btn btn-primary" data-buy-now data-price="price_VANILLA_REPLACE" data-name="Vanilla Muffin Box (4)" data-qty="1">Buy Now</button>
+                <button class="btn btn-ghost" data-add data-price="price_VANILLA_REPLACE" data-name="Vanilla Muffin Box (4)">Add to Cart</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="product card">
+            <div class="thumb-wrap"><img loading="lazy" src="images/chocolate.jpg" alt="Chocolate Chip Muffin Box (4)" class="thumb-img"></div>
+            <div class="product-info">
+              <h3>Chocolate Chip Muffin Box (4)</h3>
+              <p class="product-desc">Loaded with chocolate chips for maximum joy.</p>
+              <div class="buy buy-row">
+                <button class="btn btn-primary" data-buy-now data-price="price_CHOCOLATE_REPLACE" data-name="Chocolate Chip Muffin Box (4)" data-qty="1">Buy Now</button>
+                <button class="btn btn-ghost" data-add data-price="price_CHOCOLATE_REPLACE" data-name="Chocolate Chip Muffin Box (4)">Add to Cart</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="product card">
+            <div class="thumb-wrap"><img loading="lazy" src="images/banana.jpg" alt="Banana Nut Muffin Box (4)" class="thumb-img"></div>
+            <div class="product-info">
+              <h3>Banana Nut Muffin Box (4)</h3>
+              <p class="product-desc">Ripe bananas with crunchy walnuts for balance.</p>
+              <div class="buy buy-row">
+                <button class="btn btn-primary" data-buy-now data-price="price_BANANA_REPLACE" data-name="Banana Nut Muffin Box (4)" data-qty="1">Buy Now</button>
+                <button class="btn btn-ghost" data-add data-price="price_BANANA_REPLACE" data-name="Banana Nut Muffin Box (4)">Add to Cart</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="product card">
+            <div class="thumb-wrap"><img loading="lazy" src="images/pumpkin.jpg" alt="Pumpkin Muffin Box (4)" class="thumb-img"></div>
+            <div class="product-info">
+              <h3>Pumpkin Muffin Box (4)</h3>
+              <p class="product-desc">Warm spice, soft crumb — cozy in every bite.</p>
+              <div class="buy buy-row">
+                <button class="btn btn-primary" data-buy-now data-price="price_PUMPKIN_REPLACE" data-name="Pumpkin Muffin Box (4)" data-qty="1">Buy Now</button>
+                <button class="btn btn-ghost" data-add data-price="price_PUMPKIN_REPLACE" data-name="Pumpkin Muffin Box (4)">Add to Cart</button>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section class="section faq has-bg" id="faq" aria-label="FAQ" data-bg="images/faq-bg.jpg">
+      <div class="container">
+        <h2 class="section-title">Frequently Asked Questions</h2>
+        <div class="faq-list">
+          <article class="faq-item"><h3>How do I place an order?</h3><p>Select a muffin box and check out securely with Stripe. You’ll receive a confirmation email and delivery details.</p></article>
+          <article class="faq-item"><h3>Do you offer delivery?</h3><p>Yes! Delivery is our preferred method. Currently, delivery is available in Wadsworth and bordering cities.</p></article>
+          <article class="faq-item"><h3>How do I subscribe to consistent deliveries?</h3><p>Not yet available.</p></article>
+          <article class="faq-item"><h3>Can I schedule a delivery in advance?</h3><p>Absolutely! Ordering ahead guarantees availability and lets us plan your route.</p></article>
+          <article class="faq-item"><h3>Do you offer pickup?</h3><p>Not at this time — our focus is convenient morning delivery.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Contact -->
+    <section class="section contact has-bg" id="contact" aria-label="Contact" data-bg="images/contact-bg.jpg">
+      <div class="container">
+        <h2 class="section-title">Contact Us</h2>
+        <p class="contact-intro">Questions about your order? Want to share feedback? Reach out anytime.</p>
+        <div class="contact-grid">
+          <div class="contact-card"><h3>Email</h3><p><a href="mailto:the.muffin.man.7b@gmail.com">the.muffin.man.7b@gmail.com</a></p></div>
+          <div class="contact-card"><h3>Phone</h3><p><a href="tel:13305731074">(330) 573-1074</a></p></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer has-bg-optional" data-bg="images/footer-bg.jpg">
+    <div class="container footer-inner">
+      <div class="foot-brand">
+        <img class="brand-logo" src="images/logo.png" alt="" />
+        <span>Sean’s Muffins</span>
+      </div>
+      <div class="foot-meta">© <span id="y"></span> Sean’s Muffins · Secure checkout by Stripe</div>
+    </div>
+  </footer>
+
+  <!-- Cart Drawer -->
+  <aside id="cart-drawer" class="cart-drawer" aria-hidden="true" aria-label="Shopping cart">
+    <div class="cart-header">
+      <h2>Your Cart</h2>
+      <button id="cart-close" class="cart-close" aria-label="Close cart">✕</button>
+    </div>
+    <div id="cart-items" class="cart-items"></div>
+    <div class="cart-footer">
+      <div class="cart-total-row">
+        <span>Items:</span><strong id="cart-item-count">0</strong>
+      </div>
+      <div class="cart-actions">
+        <button id="cart-clear" class="btn btn-ghost">Clear</button>
+        <button id="cart-checkout" class="btn btn-primary">Checkout</button>
+      </div>
+      <p class="cart-note">Checkout is handled securely by Stripe.</p>
+    </div>
+  </aside>
+  <div id="cart-backdrop" class="cart-backdrop" aria-hidden="true"></div>
+
+  <!-- Muffin tapper -->
+  <button id="muffin-tapper" aria-label="Just for fun: muffin tapper" title="Tap me!">
+    <span class="mt-emoji" aria-hidden="true">🧁</span><span class="mt-count" aria-live="polite">0</span>
+  </button>
+
+  <script>
+    window.STRIPE_PUBLISHABLE_KEY = 'pk_test_51S4aBLEhhuIMCnYGXZxOXmi9Q1wyFN1Zk5wXGrP8Aac43QuO5EqCkGYCwJBY9xy0abjA2uzR9tqjMIe3kKJtANy600kYjxMC90';
+    // Map human-friendly keys to Stripe Price IDs (one-time and subscription)
+    window.PRODUCT_PRICE_MAP = {
+      BLUEBERRY: 'prod_T0zc8yB7Ez2jxV',
+      VANILLA: 'prod_T0za7yAmUI1h6d',
+      CHOCOLATE: 'prod_T0zYdTKZ06UXx1',
+      BANANA: 'prod_T0zWi7wn8rXxxs',
+      PUMPKIN: 'prod_T0zV3BmDohEH6J',
+      SUBSCRIPTION: 'prod_T0zSCACpADCXAm'
+    };
+  </script>
+  <script src="js/app.js"></script>
+</body>
+</html>

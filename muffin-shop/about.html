@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>About — Sean’s Muffins</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="index.html">
+        <img class="brand-logo" src="images/logo.png" alt="Sean’s Muffins logo" />
+        <span>Sean’s Muffins</span>
+      </a>
+
+      <button class="nav-toggle" aria-expanded="false" aria-controls="primary-nav" aria-label="Toggle menu">
+        <span class="bar"></span><span class="bar"></span><span class="bar"></span>
+      </button>
+
+      <nav id="primary-nav" class="nav">
+        <a href="index.html#shop">Shop</a>
+        <a href="index.html#how">How it works</a>
+        <a href="index.html#faq">FAQ</a>
+        <a href="index.html#contact">Contact</a>
+        <a aria-current="page" href="about.html">About</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="about-hero has-bg" data-bg="images/about-bg.jpg">
+    <div class="container">
+      <h1 class="about-title">Our Story</h1>
+      <p class="about-sub">Why muffins, why local delivery, and what we’re building together.</p>
+    </div>
+  </section>
+
+  <main>
+    <section class="section">
+      <div class="container about-prose">
+        <h2>The Beginning</h2>
+        <p>I have always been driven by a passion for both efficiency and high-quality food. My early experience working in a grocery store taught me the value of optimizing processes to better serve people, and that mindset carried into my personal life as I became more intentional about the food I consume. I began studying ingredients, prioritizing quality, and eliminating anything wasteful or harmful from my diet.</p>
+        <p>From this dedication, the idea for Muffins was born. While muffins are not often associated with health, I saw the opportunity to create a breakfast option that combines convenience with integrity using only high-quality ingredients that provide real nourishment to start the day right. With over a year devoted to refining what I eat and how I source it, I bring that same care and efficiency to every product I make and deliver.</p>
+
+        <h2>What It Means To Me</h2>
+        <p>Muffins are more than a simple breakfast item, they’re a symbol of what’s possible when communities take care of themselves. They represent sustainability, independence, and the belief that we don’t have to depend on large corporations to define how we eat or how we live. Each muffin is a small step toward building a healthier, more connected world.</p>
+
+        <h2>The Goal</h2>
+        <blockquote class="about-quote">“I envision a future where breakfast is delivered to every doorstep without waste. A future where communities thrive on healthy, nourishing foods that are free from fillers and preservatives. Ultimately, my goal is to create something that benefits everyone and proves that a better way is possible.” <span class="sig">— Sean</span></blockquote>
+
+        <div class="about-cta">
+          <a class="btn btn-primary" href="index.html#shop">Shop Muffin Boxes</a>
+          <a class="btn btn-ghost" href="index.html">Back to Home</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer has-bg-optional" data-bg="images/footer-bg.jpg">
+    <div class="container footer-inner">
+      <div class="foot-brand">
+        <img class="brand-logo" src="images/logo.png" alt="" />
+        <span>Sean’s Muffins</span>
+      </div>
+      <div class="foot-meta">© <span id="y"></span> Sean’s Muffins · Secure checkout by Stripe</div>
+    </div>
+  </footer>
+
+  <button id="muffin-tapper" aria-label="Just for fun: muffin tapper" title="Tap me!">
+    <span class="mt-emoji" aria-hidden="true">🧁</span><span class="mt-count" aria-live="polite">0</span>
+  </button>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
