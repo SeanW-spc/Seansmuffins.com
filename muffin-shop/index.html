@@ -9,7 +9,6 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/styles.css">
-  <script async src="https://js.stripe.com/v3"></script>
 </head>
 <body>
   <!-- Header -->
@@ -83,7 +82,7 @@
       <div class="container">
         <h2 class="section-title">Muffin Boxes</h2>
 
-        <!-- Subscription highlight (Buy Now OR add to cart as 1 quantity—usually subs are buy-now only) -->
+        <!-- Subscription highlight -->
         <article class="product highlight">
           <div class="product-info">
             <div class="product-top">
@@ -101,7 +100,7 @@
                 data-price="price_SUBSCRIPTION_REPLACE"
                 data-name="Weekly Muffin Box">Add to Cart</button>
             </div>
-            <p class="hint">Tip: In your Stripe Payment Link or Price → Checkout settings, enable shipping address and custom fields (e.g., “Preferred delivery time range”).</p>
+            <p class="hint">Tip: In Stripe Checkout settings, enable shipping address and add a custom field like “Preferred delivery time range”.</p>
           </div>
           <div class="product-art" aria-hidden="true">
             <div class="box box-a"></div><div class="box box-b"></div>
@@ -235,18 +234,24 @@
     <span class="mt-emoji" aria-hidden="true">🧁</span><span class="mt-count" aria-live="polite">0</span>
   </button>
 
+  <!-- Load Stripe first (no async/defer) -->
+  <script src="https://js.stripe.com/v3"></script>
+
+  <!-- Your keys + Price IDs -->
   <script>
     window.STRIPE_PUBLISHABLE_KEY = 'pk_test_51S4aBLEhhuIMCnYGXZxOXmi9Q1wyFN1Zk5wXGrP8Aac43QuO5EqCkGYCwJBY9xy0abjA2uzR9tqjMIe3kKJtANy600kYjxMC90';
-    // Map human-friendly keys to Stripe Price IDs (one-time and subscription)
+    // Use Stripe PRICE IDs (price_...), not product IDs
     window.PRODUCT_PRICE_MAP = {
-      BLUEBERRY: 'prod_T0zc8yB7Ez2jxV',
-      VANILLA: 'prod_T0za7yAmUI1h6d',
-      CHOCOLATE: 'prod_T0zYdTKZ06UXx1',
-      BANANA: 'prod_T0zWi7wn8rXxxs',
-      PUMPKIN: 'prod_T0zV3BmDohEH6J',
-      SUBSCRIPTION: 'prod_T0zSCACpADCXAm'
+      BLUEBERRY: 'price_1S4xdNEhhuIMCnYG0n9xh6LQ',
+      VANILLA: 'price_1S4xbBEhhuIMCnYGTGHNfZhh',
+      CHOCOLATE: 'price_1S4xZcEhhuIMCnYGcoPap88e',
+      BANANA: 'price_1S4xXgEhhuIMCnYGYLabD3Yp',
+      PUMPKIN: 'price_1S4xW1EhhuIMCnYGqo4e87MS',
+      SUBSCRIPTION: 'price_1S4xTIEhhuIMCnYGJkLqyqCj'
     };
   </script>
+
+  <!-- App code last -->
   <script src="js/app.js"></script>
 </body>
 </html>
