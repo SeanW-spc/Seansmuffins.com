@@ -4,7 +4,7 @@ if (y) y.textContent = new Date().getFullYear();
 
 // ===== Smooth scroll =====
 document.querySelectorAll('a[href^="#"]').forEach(a => {
-  a.addEventListener('click', (e) => {
+  a.addEventListener('click', e => {
     const el = document.querySelector(a.getAttribute('href'));
     if (!el) return;
     e.preventDefault();
@@ -23,7 +23,7 @@ document.querySelectorAll('a[href^="#"]').forEach(a => {
   nav.querySelectorAll('a').forEach(l => l.addEventListener('click', closeNav));
 })();
 
-// ===== Section backgrounds =====
+// ===== Section background images =====
 (function applySectionBGs(){
   document.querySelectorAll('.has-bg, .has-bg-optional').forEach(sec => {
     const url = sec.getAttribute('data-bg');
@@ -31,7 +31,7 @@ document.querySelectorAll('a[href^="#"]').forEach(a => {
   });
 })();
 
-// ===== Parallax hero (disabled on small screens / reduced motion) =====
+// ===== Parallax hero (disabled on small/reduced motion) =====
 (function initParallax(){
   const sec = document.querySelector('.parallax');
   if (!sec) return;
@@ -48,15 +48,15 @@ document.querySelectorAll('a[href^="#"]').forEach(a => {
   addEventListener('scroll', onScroll, {passive:true}); addEventListener('resize', onScroll, {passive:true}); update();
 })();
 
-// ===== Muffin tapper =====
+// ===== Muffin tapper (fun counter) =====
 (function initMuffinTapper(){
   const btn = document.getElementById('muffin-tapper'); if (!btn) return;
   const emojiEl = btn.querySelector('.mt-emoji'); const countEl = btn.querySelector('.mt-count');
   const KEY='muffin_tapper_count_v1'; const EMOJIS=['🧁','🧁✨','🧁🍫','🧁💙','🧁🍌','🧁🌰'];
-  emojiEl.textContent = EMOJIS[Math.floor(Math.random()*EMOJIS.length)];
+  if (emojiEl) emojiEl.textContent = EMOJIS[Math.floor(Math.random()*EMOJIS.length)];
   let count = 0; try{ const saved=localStorage.getItem(KEY); if(saved) count=Math.max(0,parseInt(saved,10)||0);}catch{}
-  countEl.textContent=String(count);
-  btn.addEventListener('click',()=>{ count+=1; countEl.textContent=String(count); try{localStorage.setItem(KEY,String(count));}catch{} btn.classList.add('bump'); setTimeout(()=>btn.classList.remove('bump'),120); });
+  if (countEl) countEl.textContent=String(count);
+  btn.addEventListener('click',()=>{ count+=1; if(countEl) countEl.textContent=String(count); try{localStorage.setItem(KEY,String(count));}catch{} btn.classList.add('bump'); setTimeout(()=>btn.classList.remove('bump'),120); });
 })();
 
 // ===================== CART =====================
@@ -71,7 +71,7 @@ const $cartItemCount = document.getElementById('cart-item-count');
 const $cartClear = document.getElementById('cart-clear');
 const $cartCheckout = document.getElementById('cart-checkout');
 
-// Cart state
+// State
 let cart = [];
 function saveCart(){ try{ localStorage.setItem(CART_KEY, JSON.stringify(cart)); }catch{} }
 function loadCart(){ try{ const raw=localStorage.getItem(CART_KEY); cart = raw? JSON.parse(raw):[]; }catch{ cart=[]; } }
@@ -89,16 +89,20 @@ function renderCart(){
       div.innerHTML = `
         <div class="cart-item-name">${item.name}</div>
         <div class="cart-qty">
-          <button aria-label="Decrease">–</button>
+          <button data-act="dec" aria-label="Decrease">–</button>
           <span>${item.quantity}</span>
-          <button aria-label="Increase">+</button>
-          <button aria-label="Remove" title="Remove" style="margin-left:6px;border-color:#ffd3db">✕</button>
+          <button data-act="inc" aria-label="Increase">+</button>
+          <button data-act="remove" aria-label="Remove" title="Remove" style="margin-left:6px;border-color:#ffd3db">✕</button>
         </div>
       `;
-      const [btnDec, , , btnInc, btnRemove] = div.querySelectorAll('button');
-      btnDec.addEventListener('click', () => { item.quantity = Math.max(1, item.quantity-1); updateCartUI(); });
-      btnInc.addEventListener('click', () => { item.quantity += 1; updateCartUI(); });
-      btnRemove.addEventListener('click', () => { cart.splice(idx,1); updateCartUI(); });
+      const btnDec = div.querySelector('[data-act="dec"]');
+      const btnInc = div.querySelector('[data-act="inc"]');
+      const btnRemove = div.querySelector('[data-act="remove"]');
+
+      if (btnDec) btnDec.addEventListener('click', () => { item.quantity = Math.max(1, item.quantity-1); updateCartUI(); });
+      if (btnInc) btnInc.addEventListener('click', () => { item.quantity += 1; updateCartUI(); });
+      if (btnRemove) btnRemove.addEventListener('click', () => { cart.splice(idx,1); updateCartUI(); });
+
       $cartItems.appendChild(div);
     });
   }
@@ -109,7 +113,7 @@ function renderCart(){
 }
 function updateCartUI(){ renderCart(); }
 
-// Open/close cart
+// Open/close
 function openCart(){ if($cartDrawer){ $cartDrawer.classList.add('open'); } if($cartBackdrop){ $cartBackdrop.classList.add('open'); } document.body.style.overflow='hidden'; }
 function closeCart(){ if($cartDrawer){ $cartDrawer.classList.remove('open'); } if($cartBackdrop){ $cartBackdrop.classList.remove('open'); } document.body.style.overflow=''; }
 
@@ -118,9 +122,8 @@ if ($cartClose) $cartClose.addEventListener('click', closeCart);
 if ($cartBackdrop) $cartBackdrop.addEventListener('click', closeCart);
 if ($cartClear) $cartClear.addEventListener('click', ()=>{ cart=[]; updateCartUI(); });
 
-// Add-to-cart + Buy-now hooks
+// Add / Buy buttons
 function initProductButtons(){
-  // Add-to-cart
   document.querySelectorAll('[data-add]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const price = btn.getAttribute('data-price');
@@ -133,7 +136,6 @@ function initProductButtons(){
     });
   });
 
-  // Buy-now (single line item straight to checkout)
   document.querySelectorAll('[data-buy-now]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const price = btn.getAttribute('data-price');
@@ -144,26 +146,32 @@ function initProductButtons(){
   });
 }
 
-// Safe Stripe init (cart still works if key missing)
+// ===== Stripe (safe init) =====
 let stripe = null;
-(function initStripe(){
+function tryInitStripe() {
   const pk = (window && window.STRIPE_PUBLISHABLE_KEY) ? String(window.STRIPE_PUBLISHABLE_KEY) : '';
-  if (!pk || pk.startsWith('pk_REPLACE') || pk === 'undefined'){
-    console.warn('Stripe publishable key is not set yet. Cart will work, checkout will be disabled.');
-    return; // leave stripe=null so checkout path can warn
+  if (!pk || pk.startsWith('pk_REPLACE') || pk === 'undefined') {
+    console.warn('Stripe publishable key not set. Cart works; checkout disabled.');
+    return;
   }
-  try{
-    stripe = Stripe(pk);
-  }catch(e){
+  if (!window.Stripe) {
+    setTimeout(tryInitStripe, 100);
+    return;
+  }
+  try {
+    stripe = window.Stripe(pk);
+  } catch (e) {
     console.error('Stripe init failed:', e);
     stripe = null;
   }
-})();
+}
+if (document.readyState === 'complete') { tryInitStripe(); }
+else { window.addEventListener('load', tryInitStripe); }
+tryInitStripe();
 
 async function goToCheckout(items){
-  // No Stripe yet? Prevent hard crash; let user know what to do.
   if (!stripe){
-    alert('Checkout isn’t ready yet. Add your Stripe publishable key in index.html and your secret key in Vercel env, then try again.');
+    alert('Checkout isn’t ready yet. Ensure publishable key in js/config.js and STRIPE_SECRET_KEY in Vercel.');
     return;
   }
   try{
@@ -172,21 +180,19 @@ async function goToCheckout(items){
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ items })
     });
+    if (!res.ok){
+      const text = await res.text();
+      console.error('Checkout session failed', res.status, text);
+      alert(`Checkout failed (${res.status}). ${text || 'See console.'}`);
+      return;
+    }
     const data = await res.json();
-    if (data.url){ window.location.href = data.url; }
-    else { alert(data.error || 'Unable to start checkout.'); }
-  } catch (e){
-    console.error(e);
+    if (data.url) window.location.href = data.url;
+    else alert(data.error || 'No checkout URL returned.');
+  } catch(e){
+    console.error('Network error:', e);
     alert('Network error starting checkout.');
   }
-}
-
-if ($cartCheckout){
-  $cartCheckout.addEventListener('click', async ()=>{
-    if (cart.length === 0){ alert('Your cart is empty.'); return; }
-    const items = cart.map(i => ({ price: i.price, quantity: i.quantity }));
-    await goToCheckout(items);
-  });
 }
 
 // Boot

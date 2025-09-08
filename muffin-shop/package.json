@@ -2,7 +2,6 @@
   "name": "muffin-shop",
   "private": true,
   "version": "1.0.0",
-  "license": "UNLICENSED",
   "dependencies": {
     "stripe": "^16.8.0"
   }
