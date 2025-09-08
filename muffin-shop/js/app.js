@@ -146,6 +146,32 @@ function initProductButtons(){
   });
 }
 
+// === Cart "Checkout" button ===
+if ($cartCheckout) {
+  $cartCheckout.addEventListener('click', async () => {
+    if (!cart || cart.length === 0) {
+      alert('Your cart is empty.');
+      return;
+    }
+
+    // Validate items have Stripe PRICE IDs
+    const bad = cart.find(i => !i.price || !String(i.price).startsWith('price_'));
+    if (bad) {
+      alert('One or more items are missing a valid Stripe Price ID (must start with price_).');
+      return;
+    }
+
+    // Optional: disable button while creating session
+    $cartCheckout.disabled = true;
+    try {
+      await goToCheckout(cart.map(({ price, quantity }) => ({ price, quantity })));
+    } finally {
+      $cartCheckout.disabled = false;
+    }
+  });
+}
+
+
 // ===== Stripe (safe init) =====
 let stripe = null;
 function tryInitStripe() {
