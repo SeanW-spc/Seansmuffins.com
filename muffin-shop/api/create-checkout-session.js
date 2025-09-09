@@ -8,9 +8,7 @@ module.exports = async (req, res) => {
   }
 
   const secret = process.env.STRIPE_SECRET_KEY;
-  if (!secret) {
-    return res.status(500).json({ error: 'Missing STRIPE_SECRET_KEY env var' });
-  }
+  if (!secret) return res.status(500).json({ error: 'Missing STRIPE_SECRET_KEY env var' });
 
   const stripe = new Stripe(secret, { apiVersion: '2024-06-20' });
 
@@ -21,7 +19,6 @@ module.exports = async (req, res) => {
     }
     const mode = (rawMode === 'subscription') ? 'subscription' : 'payment';
 
-    // Build base URL
     const proto = req.headers['x-forwarded-proto'] || 'https';
     const host = req.headers['x-forwarded-host'] || req.headers.host;
     const baseUrl = `${proto}://${host}`;
@@ -31,6 +28,22 @@ module.exports = async (req, res) => {
       line_items: items.map(i => ({ price: i.price, quantity: i.quantity })),
       shipping_address_collection: { allowed_countries: ['US'] },
       phone_number_collection: { enabled: true },
+
+      // collect preferred delivery window
+      custom_fields: [
+        {
+          key: 'preferred_window',
+          label: { type: 'custom', custom: 'Preferred delivery time range' },
+          type: 'text',
+          optional: false,
+          text: {
+            // guidance examples for customer
+            default_value: '7:30–8:30 AM',
+            maximum_length: 40
+          }
+        }
+      ],
+
       success_url: `${baseUrl}/index.html?checkout=success`,
       cancel_url: `${baseUrl}/index.html?checkout=cancel`
     });

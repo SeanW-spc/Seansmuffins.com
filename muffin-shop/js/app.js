@@ -234,9 +234,5 @@ async function goToCheckout(items, mode='payment'){
     alert('Network error starting checkout.');
   }
 }
-
-/* =====================
-   BOOT
-   ===================== */
 loadCart();
 renderCart();
