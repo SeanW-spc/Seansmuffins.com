@@ -22,10 +22,12 @@ function parseAddress(addr = {}) {
   ].filter(Boolean);
   return parts.join('\n');
 }
+
 function parsePreferredWindow(custom_fields = []) {
   const f = custom_fields.find(x => x.key === 'preferred_window');
   return (f && f.text && f.text.value) || '';
 }
+
 function todayISO(tz = 'America/New_York') {
   const now = new Date();
   const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -45,12 +47,9 @@ module.exports = async (req, res) => {
 
   const stripe = new Stripe(secret, { apiVersion: '2024-06-20' });
 
+  // Stripe must include this header; if you hit the URL in a browser, it will be missing.
   const sig = req.headers['stripe-signature'];
-  if (!sig) {
-  console.warn('No Stripe-Signature. Headers seen:', Object.keys(req.headers));
-  return res.status(400).send('Missing Stripe-Signature');
-  }
-
+  if (!sig) return res.status(400).send('Missing Stripe-Signature');
 
   let event;
   try {
@@ -66,19 +65,30 @@ module.exports = async (req, res) => {
   }
 
   try {
+    // ❌ Do NOT expand shipping_details/customer_details (they're not expandable)
+    // ✅ Only expand line_items (and nested price.product if you ever need product data)
     const session = await stripe.checkout.sessions.retrieve(event.data.object.id, {
-      expand: ['line_items', 'customer_details', 'shipping_details']
+      expand: ['line_items'] // keep it simple; add 'line_items.data.price.product' if you want product details later
     });
 
-    const items = (session.line_items?.data || []).map(li => ({
+    // Fallback: if for any reason line_items didn't expand, fetch explicitly
+    let lineItems = session.line_items && session.line_items.data;
+    if (!lineItems) {
+      const li = await stripe.checkout.sessions.listLineItems(session.id);
+      lineItems = li.data || [];
+    }
+
+    const items = lineItems.map(li => ({
       name: li.description,
       qty: li.quantity
     }));
 
+    // These are regular properties on the Session; no expand needed
     const address = parseAddress(session.shipping_details?.address || {});
     const preferredWindow = parsePreferredWindow(session.custom_fields || []);
     const total = (session.amount_total ?? 0) / 100;
 
+    // === Save to Airtable ===
     const baseId = process.env.AIRTABLE_BASE_ID;
     const tableName = process.env.AIRTABLE_TABLE_NAME || 'Orders';
     const apiKey = process.env.AIRTABLE_API_KEY;
