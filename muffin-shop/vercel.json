@@ -1,8 +1,7 @@
 {
-  "version": 2,
-  "routes": [
-    { "handle": "filesystem" }
-  ],
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "cleanUrls": true,
+  "trailingSlash": false,
   "headers": [
     {
       "source": "/(.*)",
