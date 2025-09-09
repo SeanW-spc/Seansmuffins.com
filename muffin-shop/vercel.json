@@ -1,12 +1,19 @@
 {
+  "version": 2,
+  "routes": [
+    { "handle": "filesystem" }
+  ],
   "headers": [
     {
       "source": "/(.*)",
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self' https://js.stripe.com https://m.stripe.network; connect-src 'self' https://api.stripe.com https://r.stripe.com; frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com; img-src 'self' data: https://*.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; base-uri 'self'; form-action 'self' https://checkout.stripe.com; object-src 'none'; frame-ancestors 'none'; upgrade-insecure-requests"
-        }
+          "value": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: https:; font-src 'self' https://fonts.gstatic.com data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' https://js.stripe.com; connect-src 'self' https://api.stripe.com https://m.stripe.com https://m.stripe.network https://r.stripe.com; frame-src https://js.stripe.com https://hooks.stripe.com; form-action 'self' https://hooks.stripe.com; upgrade-insecure-requests; block-all-mixed-content"
+        },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Permissions-Policy", "value": "interest-cohort=()" }
       ]
     }
   ]
