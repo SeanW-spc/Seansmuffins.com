@@ -1,4 +1,3 @@
-<!-- merch.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -8,6 +7,9 @@
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
+  <span id="a11y-live" class="visually-hidden" aria-live="polite"></span>
+  <div id="toast" class="toast-container" aria-live="polite"></div>
+
   <header class="site-header">
     <div class="container header-inner">
       <a class="brand" href="index.html">
@@ -24,16 +26,26 @@
         <a class="active" href="merch.html">Merch (coming soon)</a>
         <a href="about.html">About</a>
       </nav>
-      <button id="cart-button" class="cart-button" aria-label="Open cart" title="Cart">
-        🧺 <span class="cart-count" id="cart-count">0</span>
-      </button>
+      <button id="cart-button" class="cart-button" aria-label="Open cart" title="Cart">🧺 <span class="cart-count" id="cart-count">0</span></button>
+    </div>
+    <div class="service-bar">
+      <div>🚗 Delivering to <strong>Wadsworth (44281)</strong> • ⏰ Order by <strong>8:30 PM</strong> for next-day delivery</div>
     </div>
   </header>
 
   <main class="section">
     <div class="container">
       <h1>Merch Coming Soon</h1>
-      <p>Stickers, shirts, and mugs are in the works. Stay tuned!</p>
+      <p>Stickers, shirts, and mugs are in the works. Join the list and we’ll email you when it drops.</p>
+
+      <form id="merch-form" class="card" style="background:#fff;border:1px solid var(--line);border-radius:18px;padding:16px;max-width:520px">
+        <label class="label" for="merch-email">Email</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input id="merch-email" class="input" type="email" name="email" placeholder="you@example.com" required style="flex:1;min-width:220px" />
+          <button class="btn btn-primary" type="submit">Notify Me</button>
+        </div>
+        <div id="merch-msg" class="product-desc" style="margin-top:8px;color:#6a6f76"></div>
+      </form>
     </div>
   </main>
 
@@ -43,19 +55,12 @@
 
   <!-- Cart Drawer -->
   <aside id="cart-drawer" class="cart-drawer" aria-hidden="true" aria-label="Shopping cart">
-    <div class="cart-header">
-      <h2>Your Cart</h2>
-      <button id="cart-close" class="cart-close" aria-label="Close cart">✕</button>
-    </div>
+    <div class="cart-header"><h2>Your Cart</h2><button id="cart-close" class="cart-close" aria-label="Close cart">✕</button></div>
     <div id="cart-items" class="cart-items"></div>
     <div class="cart-footer">
-      <div class="cart-total-row">
-        <span>Items:</span><strong id="cart-item-count">0</strong>
-      </div>
-      <div class="cart-actions">
-        <button id="cart-clear" class="btn btn-ghost">Clear</button>
-        <button id="cart-checkout" class="btn btn-primary">Checkout</button>
-      </div>
+      <div class="cart-total-row"><span>Items:</span><strong id="cart-item-count">0</strong></div>
+      <div class="cart-actions"><button id="cart-clear" class="btn btn-ghost">Clear</button><button id="cart-checkout" class="btn btn-primary">Checkout</button></div>
+      <p class="cart-cutoff">Orders after 8:30 PM are delivered the day after tomorrow.</p>
       <p class="cart-note">Checkout is handled securely by Stripe.</p>
     </div>
   </aside>

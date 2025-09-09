@@ -7,18 +7,18 @@
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
-  <!-- Header -->
+  <span id="a11y-live" class="visually-hidden" aria-live="polite"></span>
+  <div id="toast" class="toast-container" aria-live="polite"></div>
+
   <header class="site-header">
     <div class="container header-inner">
       <a class="brand" href="index.html">
         <img class="brand-logo" src="images/logo.png" alt="Sean’s Muffins logo" />
         <span>Sean’s Muffins</span>
       </a>
-
       <button class="nav-toggle" aria-expanded="false" aria-controls="primary-nav" aria-label="Toggle menu">
         <span class="bar"></span><span class="bar"></span><span class="bar"></span>
       </button>
-
       <nav id="primary-nav" class="nav">
         <a href="index.html">Home</a>
         <a class="active" href="muffins.html">Muffins</a>
@@ -26,10 +26,10 @@
         <a href="merch.html">Merch (coming soon)</a>
         <a href="about.html">About</a>
       </nav>
-
-      <button id="cart-button" class="cart-button" aria-label="Open cart" title="Cart">
-        🧺 <span class="cart-count" id="cart-count">0</span>
-      </button>
+      <button id="cart-button" class="cart-button" aria-label="Open cart" title="Cart">🧺 <span class="cart-count" id="cart-count">0</span></button>
+    </div>
+    <div class="service-bar">
+      <div>🚗 Delivering to <strong>Wadsworth (44281)</strong> • ⏰ Order by <strong>8:30 PM</strong> for next-day delivery</div>
     </div>
   </header>
 
@@ -40,62 +40,35 @@
         Weekly deliveries. Cancel anytime. Delivery currently available in <strong>Wadsworth (44281)</strong> only.
       </p>
       <div class="grid-products subs-grid">
-        <!-- 1) Existing subscription (your original) -->
         <article class="product card">
           <div class="product-info">
-            <div class="product-top">
-              <h3>Weekly Muffin Box (4)</h3>
-              <span class="badge">Subscription</span>
-            </div>
+            <div class="product-top"><h3>Weekly Muffin Box (4)</h3><span class="badge">Subscription</span></div>
             <p class="product-desc">4 baker’s-choice muffins delivered every week.</p>
             <ul class="bullets"><li>Seasonal favorites</li><li>Skip or cancel anytime</li><li>Stripe secure checkout</li></ul>
             <div class="buy buy-row">
-              <button class="btn btn-primary"
-                data-buy-now
-                data-mode="subscription"
-                data-price="price_1S4xTIEhhuIMCnYGJkLqyqCj"
-                data-name="Weekly Muffin Box (4)"
-                data-qty="1">Subscribe Now</button>
+              <button class="btn btn-primary" data-buy-now data-mode="subscription" data-price="price_1S4xTIEhhuIMCnYGJkLqyqCj" data-name="Weekly Muffin Box (4)" data-qty="1">Subscribe Now</button>
             </div>
           </div>
         </article>
 
-        <!-- 2) Family Weekly Box (8) — replace price with your Stripe price id -->
         <article class="product card">
           <div class="product-info">
-            <div class="product-top">
-              <h3>Family Weekly Box (8)</h3>
-              <span class="badge">Subscription</span>
-            </div>
+            <div class="product-top"><h3>Family Weekly Box (8)</h3><span class="badge">Subscription</span></div>
             <p class="product-desc">Double the muffins for busy mornings.</p>
             <ul class="bullets"><li>8 muffins each week</li><li>Flexible delivery</li><li>No commitment</li></ul>
             <div class="buy buy-row">
-              <button class="btn btn-primary"
-                data-buy-now
-                data-mode="subscription"
-                data-price="price_sub_weekly_8"  <!-- TODO: replace with real Stripe price id -->
-                data-name="Family Weekly Box (8)"
-                data-qty="1">Subscribe Now</button>
+              <button class="btn btn-primary" data-buy-now data-mode="subscription" data-price="price_sub_weekly_8" data-name="Family Weekly Box (8)" data-qty="1">Subscribe Now</button>
             </div>
           </div>
         </article>
 
-        <!-- 3) Office Weekly Box (12) — replace price with your Stripe price id -->
         <article class="product card">
           <div class="product-info">
-            <div class="product-top">
-              <h3>Office Weekly Box (12)</h3>
-              <span class="badge">Subscription</span>
-            </div>
+            <div class="product-top"><h3>Office Weekly Box (12)</h3><span class="badge">Subscription</span></div>
             <p class="product-desc">Fuel the team with a dozen fresh muffins weekly.</p>
             <ul class="bullets"><li>12 muffins each week</li><li>Team-friendly</li><li>Cancel anytime</li></ul>
             <div class="buy buy-row">
-              <button class="btn btn-primary"
-                data-buy-now
-                data-mode="subscription"
-                data-price="price_sub_weekly_12" <!-- TODO: replace with real Stripe price id -->
-                data-name="Office Weekly Box (12)"
-                data-qty="1">Subscribe Now</button>
+              <button class="btn btn-primary" data-buy-now data-mode="subscription" data-price="price_sub_weekly_12" data-name="Office Weekly Box (12)" data-qty="1">Subscribe Now</button>
             </div>
           </div>
         </article>
@@ -104,118 +77,70 @@
       <hr style="margin:34px 0;border:0;border-top:1px solid #ece8e2" />
 
       <h1>Muffins</h1>
-      <p class="product-desc" style="margin:6px 0 18px;color:#6a6f76">
-        One-time boxes. Mix & match by adding to your cart.
-      </p>
+      <p class="product-desc" style="margin:6px 0 18px;color:#6a6f76">One-time boxes. Mix &amp; match by adding to your cart.</p>
 
-      <!-- Responsive grid for muffins -->
       <div class="grid-products">
         <!-- Blueberry -->
         <article class="product card" id="blueberry">
-          <div class="thumb-wrap">
-            <img loading="lazy" src="images/blueberry.jpg" alt="Blueberry Muffin" class="thumb-img">
-          </div>
+          <div class="thumb-wrap"><img loading="lazy" src="images/blueberry.jpg" alt="Blueberry Muffin" class="thumb-img"></div>
           <div class="product-info">
             <h3>Blueberry Muffin Box (4)</h3>
             <p class="product-desc">Juicy blueberries in a soft, buttery crumb.</p>
             <div class="buy buy-row">
-              <button class="btn btn-primary"
-                data-buy-now
-                data-price="price_1S4xdNEhhuIMCnYG0n9xh6LQ"
-                data-name="Blueberry Muffin Box (4)"
-                data-qty="1">Buy Now</button>
-              <button class="btn btn-ghost"
-                data-add
-                data-price="price_1S4xdNEhhuIMCnYG0n9xh6LQ"
-                data-name="Blueberry Muffin Box (4)">Add to Cart</button>
+              <button class="btn btn-primary" data-buy-now data-price="price_1S4xdNEhhuIMCnYG0n9xh6LQ" data-name="Blueberry Muffin Box (4)" data-qty="1">Buy Now</button>
+              <button class="btn btn-ghost" data-add data-price="price_1S4xdNEhhuIMCnYG0n9xh6LQ" data-name="Blueberry Muffin Box (4)">Add to Cart</button>
             </div>
           </div>
         </article>
 
         <!-- Vanilla -->
         <article class="product card" id="vanilla">
-          <div class="thumb-wrap">
-            <img loading="lazy" src="images/vanilla.jpg" alt="Vanilla Muffin" class="thumb-img">
-          </div>
+          <div class="thumb-wrap"><img loading="lazy" src="images/vanilla.jpg" alt="Vanilla Muffin" class="thumb-img"></div>
           <div class="product-info">
             <h3>Vanilla Muffin Box (4)</h3>
             <p class="product-desc">Classic vanilla with a delicate, golden top.</p>
             <div class="buy buy-row">
-              <button class="btn btn-primary"
-                data-buy-now
-                data-price="price_1S4xbBEhhuIMCnYGTGHNfZhh"
-                data-name="Vanilla Muffin Box (4)"
-                data-qty="1">Buy Now</button>
-              <button class="btn btn-ghost"
-                data-add
-                data-price="price_1S4xbBEhhuIMCnYGTGHNfZhh"
-                data-name="Vanilla Muffin Box (4)">Add to Cart</button>
+              <button class="btn btn-primary" data-buy-now data-price="price_1S4xbBEhhuIMCnYGTGHNfZhh" data-name="Vanilla Muffin Box (4)" data-qty="1">Buy Now</button>
+              <button class="btn btn-ghost" data-add data-price="price_1S4xbBEhhuIMCnYGTGHNfZhh" data-name="Vanilla Muffin Box (4)">Add to Cart</button>
             </div>
           </div>
         </article>
 
         <!-- Chocolate Chip -->
         <article class="product card" id="chocolate-chip">
-          <div class="thumb-wrap">
-            <img loading="lazy" src="images/chocolate.jpg" alt="Chocolate Chip Muffin" class="thumb-img">
-          </div>
+          <div class="thumb-wrap"><img loading="lazy" src="images/chocolate.jpg" alt="Chocolate Chip Muffin" class="thumb-img"></div>
           <div class="product-info">
             <h3>Chocolate Chip Muffin Box (4)</h3>
             <p class="product-desc">Loaded with chocolate chips for maximum joy.</p>
             <div class="buy buy-row">
-              <button class="btn btn-primary"
-                data-buy-now
-                data-price="price_1S4xZcEhhuIMCnYGcoPap88e"
-                data-name="Chocolate Chip Muffin Box (4)"
-                data-qty="1">Buy Now</button>
-              <button class="btn btn-ghost"
-                data-add
-                data-price="price_1S4xZcEhhuIMCnYGcoPap88e"
-                data-name="Chocolate Chip Muffin Box (4)">Add to Cart</button>
+              <button class="btn btn-primary" data-buy-now data-price="price_1S4xZcEhhuIMCnYGcoPap88e" data-name="Chocolate Chip Muffin Box (4)" data-qty="1">Buy Now</button>
+              <button class="btn btn-ghost" data-add data-price="price_1S4xZcEhhuIMCnYGcoPap88e" data-name="Chocolate Chip Muffin Box (4)">Add to Cart</button>
             </div>
           </div>
         </article>
 
         <!-- Banana Nut -->
         <article class="product card" id="banana-nut">
-          <div class="thumb-wrap">
-            <img loading="lazy" src="images/banana.jpg" alt="Banana Nut Muffin" class="thumb-img">
-          </div>
+          <div class="thumb-wrap"><img loading="lazy" src="images/banana.jpg" alt="Banana Nut Muffin" class="thumb-img"></div>
           <div class="product-info">
             <h3>Banana Nut Muffin Box (4)</h3>
             <p class="product-desc">Ripe bananas with crunchy walnuts for balance.</p>
             <div class="buy buy-row">
-              <button class="btn btn-primary"
-                data-buy-now
-                data-price="price_1S4xXgEhhuIMCnYGYLabD3Yp"
-                data-name="Banana Nut Muffin Box (4)"
-                data-qty="1">Buy Now</button>
-              <button class="btn btn-ghost"
-                data-add
-                data-price="price_1S4xXgEhhuIMCnYGYLabD3Yp"
-                data-name="Banana Nut Muffin Box (4)">Add to Cart</button>
+              <button class="btn btn-primary" data-buy-now data-price="price_1S4xXgEhhuIMCnYGYLabD3Yp" data-name="Banana Nut Muffin Box (4)" data-qty="1">Buy Now</button>
+              <button class="btn btn-ghost" data-add data-price="price_1S4xXgEhhuIMCnYGYLabD3Yp" data-name="Banana Nut Muffin Box (4)">Add to Cart</button>
             </div>
           </div>
         </article>
 
         <!-- Pumpkin -->
         <article class="product card" id="pumpkin">
-          <div class="thumb-wrap">
-            <img loading="lazy" src="images/pumpkin.jpg" alt="Pumpkin Muffin" class="thumb-img">
-          </div>
+          <div class="thumb-wrap"><img loading="lazy" src="images/pumpkin.jpg" alt="Pumpkin Muffin" class="thumb-img"></div>
           <div class="product-info">
             <h3>Pumpkin Muffin Box (4)</h3>
             <p class="product-desc">Warm spice, soft crumb — cozy in every bite.</p>
             <div class="buy buy-row">
-              <button class="btn btn-primary"
-                data-buy-now
-                data-price="price_1S4xW1EhhuIMCnYGqo4e87MS"
-                data-name="Pumpkin Muffin Box (4)"
-                data-qty="1">Buy Now</button>
-              <button class="btn btn-ghost"
-                data-add
-                data-price="price_1S4xW1EhhuIMCnYGqo4e87MS"
-                data-name="Pumpkin Muffin Box (4)">Add to Cart</button>
+              <button class="btn btn-primary" data-buy-now data-price="price_1S4xW1EhhuIMCnYGqo4e87MS" data-name="Pumpkin Muffin Box (4)" data-qty="1">Buy Now</button>
+              <button class="btn btn-ghost" data-add data-price="price_1S4xW1EhhuIMCnYGqo4e87MS" data-name="Pumpkin Muffin Box (4)">Add to Cart</button>
             </div>
           </div>
         </article>
@@ -224,32 +149,22 @@
   </main>
 
   <footer class="site-footer">
-    <div class="container footer-inner">
-      © <span id="y"></span> Sean’s Muffins
-    </div>
+    <div class="container footer-inner">© <span id="y"></span> Sean’s Muffins</div>
   </footer>
 
   <!-- Cart Drawer -->
   <aside id="cart-drawer" class="cart-drawer" aria-hidden="true" aria-label="Shopping cart">
-    <div class="cart-header">
-      <h2>Your Cart</h2>
-      <button id="cart-close" class="cart-close" aria-label="Close cart">✕</button>
-    </div>
+    <div class="cart-header"><h2>Your Cart</h2><button id="cart-close" class="cart-close" aria-label="Close cart">✕</button></div>
     <div id="cart-items" class="cart-items"></div>
     <div class="cart-footer">
-      <div class="cart-total-row">
-        <span>Items:</span><strong id="cart-item-count">0</strong>
-      </div>
-      <div class="cart-actions">
-        <button id="cart-clear" class="btn btn-ghost">Clear</button>
-        <button id="cart-checkout" class="btn btn-primary">Checkout</button>
-      </div>
+      <div class="cart-total-row"><span>Items:</span><strong id="cart-item-count">0</strong></div>
+      <div class="cart-actions"><button id="cart-clear" class="btn btn-ghost">Clear</button><button id="cart-checkout" class="btn btn-primary">Checkout</button></div>
+      <p class="cart-cutoff">Orders after 8:30 PM are delivered the day after tomorrow.</p>
       <p class="cart-note">Checkout is handled securely by Stripe.</p>
     </div>
   </aside>
   <div id="cart-backdrop" class="cart-backdrop" aria-hidden="true"></div>
 
-  <!-- Stripe + config + app -->
   <script src="https://js.stripe.com/v3"></script>
   <script src="js/config.js"></script>
   <script src="js/app.js"></script>

@@ -1,4 +1,3 @@
-<!-- new-flavors.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -8,6 +7,10 @@
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
+  <!-- A11y live + Toasts -->
+  <span id="a11y-live" class="visually-hidden" aria-live="polite"></span>
+  <div id="toast" class="toast-container" aria-live="polite"></div>
+
   <header class="site-header">
     <div class="container header-inner">
       <a class="brand" href="index.html">
@@ -28,12 +31,45 @@
         🧺 <span class="cart-count" id="cart-count">0</span>
       </button>
     </div>
+    <div class="service-bar">
+      <div>🚗 Delivering to <strong>Wadsworth (44281)</strong> • ⏰ Order by <strong>8:30 PM</strong> for next-day delivery</div>
+    </div>
   </header>
 
   <main class="section">
     <div class="container">
-      <h1>New & Seasonal Flavors</h1>
-      <p>Check back often! This page will showcase new and rotating flavors.</p>
+      <h1>New Releases</h1>
+      <p class="product-desc" style="margin:6px 0 18px;color:#6a6f76">Fresh out of the oven — recently launched flavors.</p>
+      <div class="grid-products" id="new-releases">
+        <!-- Placeholder card -->
+        <article class="product card">
+          <div class="thumb-wrap"><img loading="lazy" src="images/placeholder.jpg" alt="New muffin" class="thumb-img"></div>
+          <div class="product-info">
+            <h3>Coming Soon</h3>
+            <p class="product-desc">This section will show newly released flavors.</p>
+          </div>
+        </article>
+      </div>
+
+      <hr style="margin:34px 0;border:0;border-top:1px solid #ece8e2" />
+
+      <h1>Vote for the Next Muffin</h1>
+      <p class="product-desc" style="margin:6px 0 18px;color:#6a6f76">Pick one — we’ll swap these dashes for real choices soon.</p>
+
+      <!-- 4 dash-only slots; no free text -->
+      <form id="vote-form" class="card" style="background:#fff;border:1px solid var(--line);border-radius:18px;padding:16px;max-width:680px">
+        <fieldset style="border:0;padding:0;margin:0 0 12px">
+          <legend style="font-weight:800;margin-bottom:8px">Choose one</legend>
+          <label style="display:block;margin:8px 0"><input type="radio" name="flavor" value="slot-1" aria-label="Option 1" /> —</label>
+          <label style="display:block;margin:8px 0"><input type="radio" name="flavor" value="slot-2" aria-label="Option 2" /> —</label>
+          <label style="display:block;margin:8px 0"><input type="radio" name="flavor" value="slot-3" aria-label="Option 3" /> —</label>
+          <label style="display:block;margin:8px 0"><input type="radio" name="flavor" value="slot-4" aria-label="Option 4" /> —</label>
+        </fieldset>
+        <div style="display:flex;gap:10px;align-items:center">
+          <button class="btn btn-primary" type="submit">Submit Vote</button>
+          <span id="vote-msg" class="product-desc" style="margin:0;color:#6a6f76"></span>
+        </div>
+      </form>
     </div>
   </main>
 
@@ -56,6 +92,7 @@
         <button id="cart-clear" class="btn btn-ghost">Clear</button>
         <button id="cart-checkout" class="btn btn-primary">Checkout</button>
       </div>
+      <p class="cart-cutoff">Orders after 8:30 PM are delivered the day after tomorrow.</p>
       <p class="cart-note">Checkout is handled securely by Stripe.</p>
     </div>
   </aside>

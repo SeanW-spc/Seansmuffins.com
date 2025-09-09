@@ -10,26 +10,29 @@
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
+  <span id="a11y-live" class="visually-hidden" aria-live="polite"></span>
+  <div id="toast" class="toast-container" aria-live="polite"></div>
+
   <header class="site-header">
     <div class="container header-inner">
       <a class="brand" href="index.html">
         <img class="brand-logo" src="images/logo.png" alt="Sean’s Muffins logo" />
         <span>Sean’s Muffins</span>
       </a>
-
       <button class="nav-toggle" aria-expanded="false" aria-controls="primary-nav" aria-label="Toggle menu">
         <span class="bar"></span><span class="bar"></span><span class="bar"></span>
       </button>
-
       <nav id="primary-nav" class="nav">
         <a href="index.html">Home</a>
         <a href="muffins.html">Muffins</a>
         <a href="new-flavors.html">New Flavors</a>
         <a href="merch.html">Merch (coming soon)</a>
-        <a href="index.html#faq">FAQ</a>
-        <a href="index.html#contact">Contact</a>
         <a aria-current="page" href="about.html">About</a>
       </nav>
+      <button id="cart-button" class="cart-button" aria-label="Open cart" title="Cart">🧺 <span class="cart-count" id="cart-count">0</span></button>
+    </div>
+    <div class="service-bar">
+      <div>🚗 Delivering to <strong>Wadsworth (44281)</strong> • ⏰ Order by <strong>8:30 PM</strong> for next-day delivery</div>
     </div>
   </header>
 
@@ -54,7 +57,7 @@
         <blockquote class="about-quote">“I envision a future where breakfast is delivered to every doorstep without waste. A future where communities thrive on healthy, nourishing foods that are free from fillers and preservatives. Ultimately, my goal is to create something that benefits everyone and proves that a better way is possible.” <span class="sig">— Sean</span></blockquote>
 
         <div class="about-cta">
-          <a class="btn btn-primary" href="index.html#shop">Shop Muffin Boxes</a>
+          <a class="btn btn-primary" href="muffins.html">Browse Muffins</a>
           <a class="btn btn-ghost" href="index.html">Back to Home</a>
         </div>
       </div>
@@ -63,17 +66,25 @@
 
   <footer class="site-footer has-bg-optional" data-bg="images/footer-bg.jpg">
     <div class="container footer-inner">
-      <div class="foot-brand">
-        <img class="brand-logo" src="images/logo.png" alt="" />
-        <span>Sean’s Muffins</span>
-      </div>
+      <div class="foot-brand"><img class="brand-logo" src="images/logo.png" alt="" /><span>Sean’s Muffins</span></div>
       <div class="foot-meta">© <span id="y"></span> Sean’s Muffins · Secure checkout by Stripe</div>
     </div>
   </footer>
 
-  <button id="muffin-tapper" aria-label="Just for fun: muffin tapper" title="Tap me!">
-    <span class="mt-emoji" aria-hidden="true">🧁</span><span class="mt-count" aria-live="polite">0</span>
-  </button>
+  <!-- Cart Drawer -->
+  <aside id="cart-drawer" class="cart-drawer" aria-hidden="true" aria-label="Shopping cart">
+    <div class="cart-header"><h2>Your Cart</h2><button id="cart-close" class="cart-close" aria-label="Close cart">✕</button></div>
+    <div id="cart-items" class="cart-items"></div>
+    <div class="cart-footer">
+      <div class="cart-total-row"><span>Items:</span><strong id="cart-item-count">0</strong></div>
+      <div class="cart-actions"><button id="cart-clear" class="btn btn-ghost">Clear</button><button id="cart-checkout" class="btn btn-primary">Checkout</button></div>
+      <p class="cart-cutoff">Orders after 8:30 PM are delivered the day after tomorrow.</p>
+      <p class="cart-note">Checkout is handled securely by Stripe.</p>
+    </div>
+  </aside>
+  <div id="cart-backdrop" class="cart-backdrop" aria-hidden="true"></div>
+
+  <button id="muffin-tapper" aria-label="Just for fun: muffin tapper" title="Tap me!"><span class="mt-emoji" aria-hidden="true">🧁</span><span class="mt-count" aria-live="polite">0</span></button>
 
   <script src="js/app.js"></script>
 </body>
