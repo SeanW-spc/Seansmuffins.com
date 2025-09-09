@@ -23,9 +23,13 @@ function parseAddress(addr = {}) {
   return parts.join('\n');
 }
 
-function parsePreferredWindow(custom_fields = []) {
-  const f = custom_fields.find(x => x.key === 'preferred_window');
-  return (f && f.text && f.text.value) || '';
+function getCustomField(custom_fields = [], key) {
+  const f = custom_fields.find(x => x.key === key);
+  if (!f) return '';
+  if (f.type === 'text') return (f.text && f.text.value) || '';
+  if (f.type === 'numeric') return (f.numeric && f.numeric.value) || '';
+  if (f.type === 'dropdown') return (f.dropdown && f.dropdown.value) || '';
+  return '';
 }
 
 function todayISO(tz = 'America/New_York') {
@@ -33,6 +37,10 @@ function todayISO(tz = 'America/New_York') {
   const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
   const [y, m, d] = fmt.format(now).split('-');
   return `${y}-${m}-${d}`;
+}
+
+function isYYYYMMDD(s) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 
 module.exports = async (req, res) => {
@@ -47,7 +55,6 @@ module.exports = async (req, res) => {
 
   const stripe = new Stripe(secret, { apiVersion: '2024-06-20' });
 
-  // Stripe must include this header; if you hit the URL in a browser, it will be missing.
   const sig = req.headers['stripe-signature'];
   if (!sig) return res.status(400).send('Missing Stripe-Signature');
 
@@ -65,13 +72,12 @@ module.exports = async (req, res) => {
   }
 
   try {
-    // ❌ Do NOT expand shipping_details/customer_details (they're not expandable)
-    // ✅ Only expand line_items (and nested price.product if you ever need product data)
+    // Only expand line_items
     const session = await stripe.checkout.sessions.retrieve(event.data.object.id, {
-      expand: ['line_items'] // keep it simple; add 'line_items.data.price.product' if you want product details later
+      expand: ['line_items']
     });
 
-    // Fallback: if for any reason line_items didn't expand, fetch explicitly
+    // Ensure we have line items
     let lineItems = session.line_items && session.line_items.data;
     if (!lineItems) {
       const li = await stripe.checkout.sessions.listLineItems(session.id);
@@ -83,9 +89,11 @@ module.exports = async (req, res) => {
       qty: li.quantity
     }));
 
-    // These are regular properties on the Session; no expand needed
+    // Read values straight from the session
     const address = parseAddress(session.shipping_details?.address || {});
-    const preferredWindow = parsePreferredWindow(session.custom_fields || []);
+    const preferredWindow = getCustomField(session.custom_fields || [], 'preferred_window');
+    const rawDate = getCustomField(session.custom_fields || [], 'delivery_date');
+    const deliveryDate = isYYYYMMDD(rawDate) ? rawDate : todayISO(); // fallback if invalid
     const total = (session.amount_total ?? 0) / 100;
 
     // === Save to Airtable ===
@@ -112,7 +120,7 @@ module.exports = async (req, res) => {
             items: items.map(i => `${i.name} x${i.qty}`).join('\n'),
             quantity_total: items.reduce((n,i)=>n+(i.qty||0),0),
             preferred_window: preferredWindow,
-            delivery_date: todayISO(),
+            delivery_date: deliveryDate,
             delivery_time: '',
             route_position: null,
             status: 'unassigned',
