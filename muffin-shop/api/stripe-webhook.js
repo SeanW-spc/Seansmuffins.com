@@ -46,7 +46,11 @@ module.exports = async (req, res) => {
   const stripe = new Stripe(secret, { apiVersion: '2024-06-20' });
 
   const sig = req.headers['stripe-signature'];
-  if (!sig) return res.status(400).send('Missing Stripe-Signature');
+  if (!sig) {
+  console.warn('No Stripe-Signature. Headers seen:', Object.keys(req.headers));
+  return res.status(400).send('Missing Stripe-Signature');
+  }
+
 
   let event;
   try {
