@@ -28,10 +28,10 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'timeWindow required' });
     }
 
-    // Optional: Enforce slot capacity (Airtable-backed)
+    // Optional: enforce capacity via Airtable "Slots"
     let reservationId = null;
     if (hasAirtableConfig()) {
-      const capacity = parseInt(process.env.SLOT_CAPACITY_DEFAULT || '12', 10); // default: 12 per window
+      const capacity = parseInt(process.env.SLOT_CAPACITY_DEFAULT || '12', 10);
       const { available, suggestions } = await checkSlotAvailability(deliveryDate, timeWindow, capacity);
       if (!available) {
         return res.status(409).json({
@@ -48,7 +48,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // Create checkout session
+    // Create checkout session — collect shipping address + phone for delivery
     const session = await stripe.checkout.sessions.create({
       mode: mode === 'subscription' ? 'subscription' : 'payment',
       allow_promotion_codes: true,
@@ -60,6 +60,9 @@ export default async function handler(req, res) {
         timeWindow,
         reservationId: reservationId || '',
       },
+      // NEW: ask Stripe Checkout to collect phone + shipping address
+      phone_number_collection: { enabled: true },
+      shipping_address_collection: { allowed_countries: ['US'] },
       custom_fields: [
         {
           key: 'delivery_date',
@@ -99,7 +102,6 @@ async function checkSlotAvailability(dateStr, windowStr, capacity) {
   const table = encodeURIComponent(process.env.AIRTABLE_TABLE_SLOTS);
   const base = process.env.AIRTABLE_BASE_ID;
   const url = `https://api.airtable.com/v0/${base}/${table}`;
-  const nowISO = new Date().toISOString();
 
   const formula =
     `AND({Date}='${dateStr}', {Window}='${windowStr}', OR({Status}='confirmed', AND({Status}='pending', DATETIME_DIFF(NOW(), {Created}, 'minutes') < 60)))`;
@@ -175,7 +177,7 @@ async function createPendingReservation({ deliveryDate, timeWindow, itemsCount }
   if (!r.ok) {
     const t = await r.text();
     console.error('Airtable reserve error', r.status, t);
-    // If reservation fails, we still allow checkout (to avoid blocking legit orders)
+    // If reservation fails, allow checkout anyway (to avoid blocking legit orders)
     return id;
   }
   return id;
