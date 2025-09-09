@@ -1,8 +1,12 @@
+/* =========================
+   Sean’s Muffins – app.js
+   ========================= */
+
 // ===== Footer year =====
 const y = document.getElementById('y');
 if (y) y.textContent = new Date().getFullYear();
 
-// ===== Smooth scroll =====
+// ===== Smooth scroll (in-page anchors) =====
 document.querySelectorAll('a[href^="#"]').forEach(a => {
   a.addEventListener('click', e => {
     const el = document.querySelector(a.getAttribute('href'));
@@ -23,7 +27,7 @@ document.querySelectorAll('a[href^="#"]').forEach(a => {
   nav.querySelectorAll('a').forEach(l => l.addEventListener('click', closeNav));
 })();
 
-// ===== Section background images =====
+// ===== Section background images (FAQ/Contact/Footer, etc.) =====
 (function applySectionBGs(){
   document.querySelectorAll('.has-bg, .has-bg-optional').forEach(sec => {
     const url = sec.getAttribute('data-bg');
@@ -31,7 +35,7 @@ document.querySelectorAll('a[href^="#"]').forEach(a => {
   });
 })();
 
-// ===== Parallax hero (disabled on small/reduced motion) =====
+// ===== Parallax hero (disabled on small screens / reduced motion) =====
 (function initParallax(){
   const sec = document.querySelector('.parallax');
   if (!sec) return;
@@ -45,10 +49,12 @@ document.querySelectorAll('a[href^="#"]').forEach(a => {
   let ticking=false; const speed=0.25;
   function update(){ const r=sec.getBoundingClientRect(); bg.style.transform=`translate3d(0, ${-r.top*speed}px, 0)`; ticking=false; }
   function onScroll(){ if(!ticking){ requestAnimationFrame(update); ticking=true; } }
-  addEventListener('scroll', onScroll, {passive:true}); addEventListener('resize', onScroll, {passive:true}); update();
+  addEventListener('scroll', onScroll, {passive:true});
+  addEventListener('resize', onScroll, {passive:true});
+  update();
 })();
 
-// ===== Muffin tapper (fun counter) =====
+// ===== Muffin tapper (for-fun counter) =====
 (function initMuffinTapper(){
   const btn = document.getElementById('muffin-tapper'); if (!btn) return;
   const emojiEl = btn.querySelector('.mt-emoji'); const countEl = btn.querySelector('.mt-count');
@@ -59,7 +65,9 @@ document.querySelectorAll('a[href^="#"]').forEach(a => {
   btn.addEventListener('click',()=>{ count+=1; if(countEl) countEl.textContent=String(count); try{localStorage.setItem(KEY,String(count));}catch{} btn.classList.add('bump'); setTimeout(()=>btn.classList.remove('bump'),120); });
 })();
 
-// ===================== CART =====================
+/* =====================
+   CART IMPLEMENTATION
+   ===================== */
 const CART_KEY = 'sm_cart_v1';
 const $cartBtn = document.getElementById('cart-button');
 const $cartDrawer = document.getElementById('cart-drawer');
@@ -113,7 +121,7 @@ function renderCart(){
 }
 function updateCartUI(){ renderCart(); }
 
-// Open/close
+// Open/close drawer
 function openCart(){ if($cartDrawer){ $cartDrawer.classList.add('open'); } if($cartBackdrop){ $cartBackdrop.classList.add('open'); } document.body.style.overflow='hidden'; }
 function closeCart(){ if($cartDrawer){ $cartDrawer.classList.remove('open'); } if($cartBackdrop){ $cartBackdrop.classList.remove('open'); } document.body.style.overflow=''; }
 
@@ -124,6 +132,7 @@ if ($cartClear) $cartClear.addEventListener('click', ()=>{ cart=[]; updateCartUI
 
 // Add / Buy buttons
 function initProductButtons(){
+  // Add to cart
   document.querySelectorAll('[data-add]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const price = btn.getAttribute('data-price');
@@ -136,43 +145,48 @@ function initProductButtons(){
     });
   });
 
+  // Buy now (one-time or subscription)
   document.querySelectorAll('[data-buy-now]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const price = btn.getAttribute('data-price');
       const qty = parseInt(btn.getAttribute('data-qty')||'1',10);
+      const mode = (btn.getAttribute('data-mode') || 'payment').toLowerCase(); // 'payment' or 'subscription'
       if (!price){ alert('Missing price id'); return; }
-      await goToCheckout([{ price, quantity: Math.max(1, qty) }]);
+      await goToCheckout([{ price, quantity: Math.max(1, qty) }], mode);
     });
   });
 }
+initProductButtons();
 
-// === Cart "Checkout" button ===
+// Cart "Checkout" button (one-time only)
 if ($cartCheckout) {
   $cartCheckout.addEventListener('click', async () => {
     if (!cart || cart.length === 0) {
       alert('Your cart is empty.');
       return;
     }
-
-    // Validate items have Stripe PRICE IDs
-    const bad = cart.find(i => !i.price || !String(i.price).startsWith('price_'));
-    if (bad) {
-      alert('One or more items are missing a valid Stripe Price ID (must start with price_).');
+    // Prevent subscription price in cart flow
+    const subPrice = window.PRODUCT_PRICE_MAP && window.PRODUCT_PRICE_MAP.SUBSCRIPTION;
+    const hasSub = subPrice ? cart.some(i => i.price === subPrice) : false;
+    if (hasSub) {
+      alert('Subscriptions must be purchased separately. Use the "Subscribe Now" button on the Weekly Muffin Box.');
       return;
     }
+    const bad = cart.find(i => !i.price || !String(i.price).startsWith('price_'));
+    if (bad) { alert('One or more items are missing a valid Stripe Price ID.'); return; }
 
-    // Optional: disable button while creating session
     $cartCheckout.disabled = true;
     try {
-      await goToCheckout(cart.map(({ price, quantity }) => ({ price, quantity })));
+      await goToCheckout(cart.map(({ price, quantity }) => ({ price, quantity })), 'payment');
     } finally {
       $cartCheckout.disabled = false;
     }
   });
 }
 
-
-// ===== Stripe (safe init) =====
+/* =====================
+   STRIPE CHECKOUT
+   ===================== */
 let stripe = null;
 function tryInitStripe() {
   const pk = (window && window.STRIPE_PUBLISHABLE_KEY) ? String(window.STRIPE_PUBLISHABLE_KEY) : '';
@@ -195,7 +209,7 @@ if (document.readyState === 'complete') { tryInitStripe(); }
 else { window.addEventListener('load', tryInitStripe); }
 tryInitStripe();
 
-async function goToCheckout(items){
+async function goToCheckout(items, mode='payment'){
   if (!stripe){
     alert('Checkout isn’t ready yet. Ensure publishable key in js/config.js and STRIPE_SECRET_KEY in Vercel.');
     return;
@@ -204,7 +218,7 @@ async function goToCheckout(items){
     const res = await fetch('/api/create-checkout-session', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ items })
+      body: JSON.stringify({ items, mode })
     });
     if (!res.ok){
       const text = await res.text();
@@ -221,5 +235,8 @@ async function goToCheckout(items){
   }
 }
 
-// Boot
-loadCart(); renderCart(); initProductButtons();
+/* =====================
+   BOOT
+   ===================== */
+loadCart();
+renderCart();
