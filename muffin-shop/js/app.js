@@ -77,16 +77,21 @@ function toast(msg){
 /* =====================
    CART (with cross-tab sync)
    ===================== */
+/* =====================
+   CART (with cross-tab sync)
+   ===================== */
+const CLIENT_ID = Math.random().toString(36).slice(2); // identify this tab
 const CART_KEY = 'sm_cart_v1';
-const $cartBtn = document.getElementById('cart-button');
-const $cartDrawer = document.getElementById('cart-drawer');
-const $cartBackdrop = document.getElementById('cart-backdrop');
-const $cartClose = document.getElementById('cart-close');
-const $cartItems = document.getElementById('cart-items');
-const $cartCount = document.getElementById('cart-count');
+
+const $cartBtn       = document.getElementById('cart-button');
+const $cartDrawer    = document.getElementById('cart-drawer');
+const $cartBackdrop  = document.getElementById('cart-backdrop');
+const $cartClose     = document.getElementById('cart-close');
+const $cartItems     = document.getElementById('cart-items');
+const $cartCount     = document.getElementById('cart-count');
 const $cartItemCount = document.getElementById('cart-item-count');
-const $cartClear = document.getElementById('cart-clear');
-const $cartCheckout = document.getElementById('cart-checkout');
+const $cartClear     = document.getElementById('cart-clear');
+const $cartCheckout  = document.getElementById('cart-checkout');
 
 const $date = document.getElementById('delivery-date');
 const $time = document.getElementById('delivery-time');
@@ -94,14 +99,32 @@ const $time = document.getElementById('delivery-time');
 const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('sm_cart') : null;
 let cart = [];
 
-function saveCart(){ try{ localStorage.setItem(CART_KEY, JSON.stringify(cart)); if (bc) bc.postMessage({ type: 'cart', cart }); }catch{} }
-function loadCart(){ try{ const raw=localStorage.getItem(CART_KEY); cart = raw? JSON.parse(raw):[]; }catch{ cart=[]; } }
-function cartItemsTotal(){ return cart.reduce((n,i)=>n+i.quantity,0); }
+function saveCart() {
+  try {
+    localStorage.setItem(CART_KEY, JSON.stringify(cart));
+    // Broadcast to other tabs (but tag with sender id)
+    if (bc) bc.postMessage({ type: 'cart', from: CLIENT_ID, cart: cart.map(i => ({ ...i })) });
+  } catch {}
+}
 
-function renderCart(){
+function loadCart() {
+  try {
+    const raw = localStorage.getItem(CART_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    cart = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    cart = [];
+  }
+}
+
+function cartItemsTotal() {
+  return cart.reduce((n, i) => n + (parseInt(i.quantity || 0, 10) || 0), 0);
+}
+
+function renderCart(noSave = false) {
   if ($cartItems) {
     $cartItems.innerHTML = '';
-    if (cart.length === 0) {
+    if (!cart.length) {
       $cartItems.innerHTML = '<p style="color:#6a6f76;margin:8px 0 16px;">Your cart is empty.</p>';
     } else {
       cart.forEach((item, idx) => {
@@ -119,31 +142,79 @@ function renderCart(){
         const btnDec = div.querySelector('[data-act="dec"]');
         const btnInc = div.querySelector('[data-act="inc"]');
         const btnRemove = div.querySelector('[data-act="remove"]');
-        if (btnDec) btnDec.addEventListener('click', () => { item.quantity = Math.max(1, item.quantity-1); updateCartUI(); });
-        if (btnInc) btnInc.addEventListener('click', () => { item.quantity += 1; updateCartUI(); });
-        if (btnRemove) btnRemove.addEventListener('click', () => { cart.splice(idx,1); updateCartUI(); });
+        if (btnDec)    btnDec.addEventListener('click', () => { item.quantity = Math.max(1, (item.quantity || 1) - 1); updateCartUI(); });
+        if (btnInc)    btnInc.addEventListener('click', () => { item.quantity = (item.quantity || 0) + 1; updateCartUI(); });
+        if (btnRemove) btnRemove.addEventListener('click', () => { cart.splice(idx, 1); updateCartUI(); });
         $cartItems.appendChild(div);
       });
     }
   }
   const totalItems = cartItemsTotal();
-  if ($cartCount) $cartCount.textContent = String(totalItems);
+  if ($cartCount)     $cartCount.textContent     = String(totalItems);
   if ($cartItemCount) $cartItemCount.textContent = String(totalItems);
-  saveCart();
+  if (!noSave) saveCart();
 }
-function updateCartUI(){ renderCart(); }
 
-/* Cross-window listeners */
-if (bc) bc.onmessage = (ev) => { if (ev?.data?.type === 'cart') { cart = Array.isArray(ev.data.cart) ? ev.data.cart : []; renderCart(); } };
-window.addEventListener('storage', (e) => { if (e.key === CART_KEY) { try { cart = e.newValue ? JSON.parse(e.newValue) : []; } catch { cart = []; } renderCart(); }});
+function updateCartUI() { renderCart(false); }
+
+/* Cross-window listeners (ignore self + invalid payloads) */
+if (bc) {
+  bc.onmessage = (ev) => {
+    const d = ev && ev.data;
+    if (!d || d.type !== 'cart' || d.from === CLIENT_ID) return;       // ignore self
+    if (!Array.isArray(d.cart)) return;                                 // ignore bad payloads
+    cart = d.cart;
+    renderCart(true);                                                   // don't rebroadcast
+  };
+}
+
+window.addEventListener('storage', (e) => {
+  if (e.key !== CART_KEY) return;
+  try {
+    if (!e.newValue) return;                                            // ignore clears from other tabs
+    const parsed = JSON.parse(e.newValue);
+    if (!Array.isArray(parsed)) return;                                 // only accept arrays
+    cart = parsed;
+    renderCart(true);                                                   // don't rebroadcast
+  } catch {}
+});
 
 /* Open/close cart */
-function openCart(){ if($cartDrawer){ $cartDrawer.classList.add('open'); } if($cartBackdrop){ $cartBackdrop.classList.add('open'); } document.body.style.overflow='hidden'; }
-function closeCart(){ if($cartDrawer){ $cartDrawer.classList.remove('open'); } if($cartBackdrop){ $cartBackdrop.classList.remove('open'); } document.body.style.overflow=''; }
-if ($cartBtn) $cartBtn.addEventListener('click', openCart);
-if ($cartClose) $cartClose.addEventListener('click', closeCart);
+function openCart() {
+  if ($cartDrawer)   $cartDrawer.classList.add('open');
+  if ($cartBackdrop) $cartBackdrop.classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeCart() {
+  if ($cartDrawer)   $cartDrawer.classList.remove('open');
+  if ($cartBackdrop) $cartBackdrop.classList.remove('open');
+  document.body.style.overflow = '';
+}
+if ($cartBtn)      $cartBtn.addEventListener('click', openCart);
+if ($cartClose)    $cartClose.addEventListener('click', closeCart);
 if ($cartBackdrop) $cartBackdrop.addEventListener('click', closeCart);
-if ($cartClear) $cartClear.addEventListener('click', ()=>{ cart=[]; updateCartUI(); toast('Cart cleared'); announce('Cart cleared'); });
+if ($cartClear)    $cartClear.addEventListener('click', () => { cart = []; updateCartUI(); });
+
+/* ===== Product buttons ===== */
+function initProductButtons(){
+  document.querySelectorAll('[data-add]').forEach(btn=>{
+    // Defensive: ensure it never submits a parent form
+    if (!btn.hasAttribute('type')) btn.setAttribute('type', 'button');
+    btn.addEventListener('click', ()=>{
+      const price = btn.getAttribute('data-price');
+      const name  = btn.getAttribute('data-name') || 'Item';
+      if (!price){ alert('Missing price id'); return; }
+      const existing = cart.find(i => i.price === price);
+      if (existing) existing.quantity += 1;
+      else cart.push({ price, name, quantity: 1 });
+      updateCartUI();
+      openCart();
+      // toast/announce calls live elsewhere in app.js; they’re safe to keep.
+    });
+  });
+}
+initProductButtons();
+
 
 /* ===== Product buttons ===== */
 function initProductButtons(){
