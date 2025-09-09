@@ -234,3 +234,33 @@ body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,s
 
 /* Active link helper */
 .nav a.active { color: var(--accent); }
+
+
+/* Cart: small note under checkout */
+.cart-cutoff{ color:var(--muted); font-size:12px; margin-top:8px; }
+
+/* Cart: delivery form */
+.cart-delivery{
+  border-top:1px solid var(--line);
+  padding-top:12px;
+  margin-top:8px;
+}
+.cart-delivery h3{
+  margin:0 0 8px;
+  font-size:16px;
+}
+.cart-delivery .row{
+  display:grid; gap:10px; grid-template-columns:1fr 1fr;
+}
+.cart-delivery label{ font-weight:700; display:block; margin:6px 0 4px; }
+.cart-delivery input[type="date"],
+.cart-delivery select{
+  width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:#fff;
+  font:inherit;
+}
+
+/* Service bar cutoff pill (already present) */
+.cutoff-msg{
+  font-weight:800; color:#8a1f1f; background:#ffe9e9;
+  border:1px solid #ffd5d5; padding:4px 8px; border-radius:999px;
+}

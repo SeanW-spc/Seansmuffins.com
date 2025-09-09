@@ -158,6 +158,27 @@
     <div id="cart-items" class="cart-items"></div>
     <div class="cart-footer">
       <div class="cart-total-row"><span>Items:</span><strong id="cart-item-count">0</strong></div>
+
+      <!-- NEW: Delivery details -->
+      <div class="cart-delivery">
+        <h3>Delivery Details</h3>
+        <div class="row">
+          <div>
+            <label for="delivery-date">Date</label>
+            <input type="date" id="delivery-date" required>
+          </div>
+          <div>
+            <label for="delivery-time">Preferred time</label>
+            <select id="delivery-time" required>
+              <option value="">Select a window…</option>
+              <option>6:00–7:00 AM</option>
+              <option>7:00–8:00 AM</option>
+              <option>8:00–9:00 AM</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
       <div class="cart-actions"><button id="cart-clear" class="btn btn-ghost">Clear</button><button id="cart-checkout" class="btn btn-primary">Checkout</button></div>
       <p class="cart-cutoff">Orders after 8:30 PM are delivered the day after tomorrow.</p>
       <p class="cart-note">Checkout is handled securely by Stripe.</p>

@@ -4,18 +4,18 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Sean’s Muffins — Local Delivery</title>
-  <meta name="description" content="Fresh local muffins with easy Stripe checkout." />
+  <meta name="description" content="Fresh local muffins delivered in Wadsworth, OH. Easy Stripe checkout." />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
-  <!-- A11y live + toasts -->
+  <!-- A11y live + toasts (needed for cart feedback) -->
   <span id="a11y-live" class="visually-hidden" aria-live="polite"></span>
   <div id="toast" class="toast-container" aria-live="polite"></div>
 
-  <!-- Header -->
+  <!-- Header / Nav -->
   <header class="site-header">
     <div class="container header-inner">
       <a class="brand" href="index.html">
@@ -37,6 +37,7 @@
         <a href="about.html">About</a>
       </nav>
 
+      <!-- Cart button (must keep these IDs for JS) -->
       <button id="cart-button" class="cart-button" aria-label="Open cart" title="Cart">
         🧺 <span class="cart-count" id="cart-count">0</span>
       </button>
@@ -57,7 +58,7 @@
         <p style="color:#b33;font-weight:600; margin:6px 0 8px;">
           🚨 We currently deliver only within Wadsworth, Ohio (ZIP 44281).
         </p>
-        <p>Small-batch, baked at dawn. Pick a box, choose your delivery window, and we’ll bring breakfast to you.</p>
+        <p>Small-batch, baked at dawn. Pick your favorites and we’ll bring breakfast to you.</p>
         <div class="hero-cta">
           <a class="btn btn-primary" href="muffins.html">Browse Muffins</a>
           <a class="btn btn-ghost" href="about.html">Read our story</a>
@@ -82,9 +83,21 @@
       <div class="container">
         <h2 class="section-title">How it works</h2>
         <div class="steps">
-          <article class="step"><div class="step-icon">🧁</div><h3>Pick a box</h3><p>Choose a one-time box or subscribe for weekly muffins.</p></article>
-          <article class="step"><div class="step-icon">📍</div><h3>Give details</h3><p>Enter your address and a preferred delivery time range at checkout.</p></article>
-          <article class="step"><div class="step-icon">📲</div><h3>Get your ETA</h3><p>We text your ETA after we route all stops—fresh muffins arrive right on time.</p></article>
+          <article class="step">
+            <div class="step-icon">🧁</div>
+            <h3>Pick your muffins</h3>
+            <p>Choose your flavors on the Muffins page and add boxes to your cart.</p>
+          </article>
+          <article class="step">
+            <div class="step-icon">📍</div>
+            <h3>Share details</h3>
+            <p>Enter your address and preferred delivery time at checkout.</p>
+          </article>
+          <article class="step">
+            <div class="step-icon">📲</div>
+            <h3>We deliver fresh</h3>
+            <p>We’ll text your ETA once routes are set—breakfast arrives on time.</p>
+          </article>
         </div>
       </div>
     </section>
@@ -94,10 +107,18 @@
       <div class="container">
         <h2 class="section-title">Frequently Asked Questions</h2>
         <div class="faq-list">
-          <article class="faq-item"><h3>How do I place an order?</h3><p>Select a muffin box from the Muffins page and check out securely with Stripe.</p></article>
-          <article class="faq-item"><h3>Do you offer delivery?</h3><p>Yes! Delivery is available in <strong>Wadsworth (44281)</strong> only.</p></article>
-          <article class="faq-item"><h3>How do I subscribe to consistent deliveries?</h3><p>Subscriptions are on the Muffins page.</p></article>
-          <article class="faq-item"><h3>Can I schedule a delivery in advance?</h3><p>Absolutely! Ordering ahead guarantees availability and lets us plan your route.</p></article>
+          <article class="faq-item">
+            <h3>Where do you deliver?</h3>
+            <p>Delivery is currently available in <strong>Wadsworth (44281)</strong> only.</p>
+          </article>
+          <article class="faq-item">
+            <h3>What’s the order cutoff?</h3>
+            <p>Order by <strong>8:30 PM</strong> for next-day delivery. After that, your order arrives the following day.</p>
+          </article>
+          <article class="faq-item">
+            <h3>How do I subscribe?</h3>
+            <p>Subscription options are on the <a href="muffins.html">Muffins</a> page.</p>
+          </article>
         </div>
       </div>
     </section>
@@ -108,13 +129,20 @@
         <h2 class="section-title">Contact Us</h2>
         <p class="contact-intro">Questions about your order? Want to share feedback? Reach out anytime.</p>
         <div class="contact-grid">
-          <div class="contact-card"><h3>Email</h3><p><a href="mailto:the.muffin.man.7b@gmail.com">the.muffin.man.7b@gmail.com</a></p></div>
-          <div class="contact-card"><h3>Phone</h3><p><a href="tel:13305731074">(330) 573-1074</a></p></div>
+          <div class="contact-card">
+            <h3>Email</h3>
+            <p><a href="mailto:the.muffin.man.7b@gmail.com">the.muffin.man.7b@gmail.com</a></p>
+          </div>
+          <div class="contact-card">
+            <h3>Phone</h3>
+            <p><a href="tel:13305731074">(330) 573-1074</a></p>
+          </div>
         </div>
       </div>
     </section>
   </main>
 
+  <!-- Footer -->
   <footer class="site-footer has-bg-optional" data-bg="images/footer-bg.jpg">
     <div class="container footer-inner">
       <div class="foot-brand">
@@ -125,15 +153,40 @@
     </div>
   </footer>
 
-  <!-- Cart Drawer -->
+  <!-- Cart Drawer (keep IDs exactly) -->
   <aside id="cart-drawer" class="cart-drawer" aria-hidden="true" aria-label="Shopping cart">
     <div class="cart-header">
       <h2>Your Cart</h2>
       <button id="cart-close" class="cart-close" aria-label="Close cart">✕</button>
     </div>
+
     <div id="cart-items" class="cart-items"></div>
+
     <div class="cart-footer">
-      <div class="cart-total-row"><span>Items:</span><strong id="cart-item-count">0</strong></div>
+      <div class="cart-total-row">
+        <span>Items:</span><strong id="cart-item-count">0</strong>
+      </div>
+
+      <!-- Delivery details required before checkout -->
+      <div class="cart-delivery">
+        <h3>Delivery Details</h3>
+        <div class="row">
+          <div>
+            <label for="delivery-date">Date</label>
+            <input type="date" id="delivery-date" required>
+          </div>
+          <div>
+            <label for="delivery-time">Preferred time</label>
+            <select id="delivery-time" required>
+              <option value="">Select a window…</option>
+              <option>6:00–7:00 AM</option>
+              <option>7:00–8:00 AM</option>
+              <option>8:00–9:00 AM</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
       <div class="cart-actions">
         <button id="cart-clear" class="btn btn-ghost">Clear</button>
         <button id="cart-checkout" class="btn btn-primary">Checkout</button>
@@ -144,12 +197,12 @@
   </aside>
   <div id="cart-backdrop" class="cart-backdrop" aria-hidden="true"></div>
 
-  <!-- Muffin tapper -->
+  <!-- For-fun tapper (optional) -->
   <button id="muffin-tapper" aria-label="Just for fun: muffin tapper" title="Tap me!">
     <span class="mt-emoji" aria-hidden="true">🧁</span><span class="mt-count" aria-live="polite">0</span>
   </button>
 
-  <!-- Stripe + Config + App -->
+  <!-- Scripts (Stripe first, then your config, then app.js) -->
   <script src="https://js.stripe.com/v3"></script>
   <script src="js/config.js"></script>
   <script src="js/app.js"></script>

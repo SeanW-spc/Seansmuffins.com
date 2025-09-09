@@ -1,78 +1,186 @@
 // api/create-checkout-session.js
-const Stripe = require('stripe');
+// Creates a Stripe Checkout Session *and* (optionally) enforces slot capacity.
+// If Airtable env vars are not present, capacity checks are skipped (everything allowed).
 
-function tomorrowISO(tz = 'America/New_York') {
-  const now = new Date();
-  // add 1 day in UTC then format in ET
-  const plus1 = new Date(now.getTime() + 24*60*60*1000);
-  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year:'numeric', month:'2-digit', day:'2-digit' });
-  const [y,m,d] = fmt.format(plus1).split('-');
-  return `${y}-${m}-${d}`; // YYYY-MM-DD
-}
+import Stripe from 'stripe';
 
-module.exports = async (req, res) => {
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? '', {
+  apiVersion: '2024-06-20',
+});
+
+export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
-  const secret = process.env.STRIPE_SECRET_KEY;
-  if (!secret) {
-    return res.status(500).json({ error: 'Missing STRIPE_SECRET_KEY env var' });
-  }
-
-  const stripe = new Stripe(secret, { apiVersion: '2024-06-20' });
-
   try {
-    const { items, mode: rawMode } = req.body || {};
+    const { items, mode = 'payment', deliveryDate, timeWindow } = req.body || {};
+
+    // Basic validations
     if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: 'No items provided.' });
+      return res.status(400).json({ error: 'No items provided' });
     }
-    const mode = (rawMode === 'subscription') ? 'subscription' : 'payment';
+    if (!deliveryDate || !/^\d{4}-\d{2}-\d{2}$/.test(deliveryDate)) {
+      return res.status(400).json({ error: 'deliveryDate (YYYY-MM-DD) required' });
+    }
+    if (!timeWindow || typeof timeWindow !== 'string') {
+      return res.status(400).json({ error: 'timeWindow required' });
+    }
 
-    // Build base URL for redirects
-    const proto = req.headers['x-forwarded-proto'] || 'https';
-    const host = req.headers['x-forwarded-host'] || req.headers.host;
-    const baseUrl = `${proto}://${host}`;
+    // Optional: Enforce slot capacity (Airtable-backed)
+    let reservationId = null;
+    if (hasAirtableConfig()) {
+      const capacity = parseInt(process.env.SLOT_CAPACITY_DEFAULT || '12', 10); // default: 12 per window
+      const { available, suggestions } = await checkSlotAvailability(deliveryDate, timeWindow, capacity);
+      if (!available) {
+        return res.status(409).json({
+          error: 'SLOT_FULL',
+          message: 'That time window is full. Please choose another.',
+          suggestions,
+        });
+      }
+      // Reserve a spot (pending) to prevent race conditions
+      reservationId = await createPendingReservation({
+        deliveryDate,
+        timeWindow,
+        itemsCount: items.reduce((n, i) => n + (parseInt(i.quantity ?? 1, 10) || 1), 0),
+      });
+    }
 
+    // Create checkout session
     const session = await stripe.checkout.sessions.create({
-      mode,
-      line_items: items.map(i => ({ price: i.price, quantity: i.quantity })),
-      shipping_address_collection: { allowed_countries: ['US'] },
-      phone_number_collection: { enabled: true },
-
-      // Collect delivery date + preferred time window in Checkout
+      mode: mode === 'subscription' ? 'subscription' : 'payment',
+      allow_promotion_codes: true,
+      line_items: items.map(i => ({ price: i.price, quantity: i.quantity || 1 })),
+      success_url: `${process.env.NEXT_PUBLIC_SITE_URL || 'https://seansmuffins.com'}/thank-you.html?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.NEXT_PUBLIC_SITE_URL || 'https://seansmuffins.com'}/`,
+      metadata: {
+        deliveryDate,
+        timeWindow,
+        reservationId: reservationId || '',
+      },
       custom_fields: [
         {
           key: 'delivery_date',
-          label: { type: 'custom', custom: 'Preferred delivery date (YYYY-MM-DD)' },
+          label: { type: 'custom', custom: 'Delivery date' },
           type: 'text',
-          optional: false,
-          text: {
-            // Prefill to tomorrow; customer can edit
-            default_value: tomorrowISO(),
-            maximum_length: 10
-          }
+          default: deliveryDate,
         },
         {
-          key: 'preferred_window',
-          label: { type: 'custom', custom: 'Preferred delivery time range' },
+          key: 'preferred_time',
+          label: { type: 'custom', custom: 'Preferred time window' },
           type: 'text',
-          optional: false,
-          text: {
-            default_value: '7:30–8:30 AM',
-            maximum_length: 40
-          }
-        }
+          default: timeWindow,
+        },
       ],
-
-      success_url: `${baseUrl}/index.html?checkout=success`,
-      cancel_url: `${baseUrl}/index.html?checkout=cancel`
     });
 
     return res.status(200).json({ url: session.url });
   } catch (err) {
-    console.error('Stripe error:', err);
-    return res.status(500).json({ error: err.message || 'Internal Server Error' });
+    console.error('create-checkout-session error', err);
+    return res.status(500).json({ error: 'Server error' });
   }
-};
+}
+
+/* ===========================
+   Airtable helpers (optional)
+   =========================== */
+function hasAirtableConfig() {
+  return Boolean(
+    process.env.AIRTABLE_API_KEY &&
+    process.env.AIRTABLE_BASE_ID &&
+    process.env.AIRTABLE_TABLE_SLOTS
+  );
+}
+
+async function checkSlotAvailability(dateStr, windowStr, capacity) {
+  // Count confirmed + "fresh" pending (age < 60 minutes)
+  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_SLOTS);
+  const base = process.env.AIRTABLE_BASE_ID;
+  const url = `https://api.airtable.com/v0/${base}/${table}`;
+  const nowISO = new Date().toISOString();
+
+  const formula =
+    `AND({Date}='${dateStr}', {Window}='${windowStr}', OR({Status}='confirmed', AND({Status}='pending', DATETIME_DIFF(NOW(), {Created}, 'minutes') < 60)))`;
+
+  const count = await airtableCount(url, formula);
+  const available = count < capacity;
+
+  // Also compute suggestions (other windows with space)
+  const WINDOWS = getWindows();
+  const suggestions = [];
+  for (const w of WINDOWS) {
+    if (w === windowStr) continue;
+    const f = `AND({Date}='${dateStr}', {Window}='${w}', OR({Status}='confirmed', AND({Status}='pending', DATETIME_DIFF(NOW(), {Created}, 'minutes') < 60)))`;
+    const c = await airtableCount(url, f);
+    if (c < capacity) suggestions.push(w);
+  }
+
+  return { available, suggestions };
+}
+
+async function airtableCount(url, filterByFormula) {
+  let offset = null, total = 0;
+  do {
+    const query = new URL(url);
+    query.searchParams.set('pageSize', '100');
+    query.searchParams.set('filterByFormula', filterByFormula);
+    if (offset) query.searchParams.set('offset', offset);
+
+    const r = await fetch(query.toString(), {
+      headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
+    });
+    if (!r.ok) throw new Error(`Airtable count error ${r.status}`);
+    const data = await r.json();
+    total += (data.records || []).length;
+    offset = data.offset;
+  } while (offset);
+  return total;
+}
+
+function getWindows() {
+  // Keep in sync with UI
+  return ['6:00–7:00 AM', '7:00–8:00 AM', '8:00–9:00 AM'];
+}
+
+async function createPendingReservation({ deliveryDate, timeWindow, itemsCount }) {
+  const id = (globalThis.crypto?.randomUUID?.() || randomId());
+  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_SLOTS);
+  const base = process.env.AIRTABLE_BASE_ID;
+  const url = `https://api.airtable.com/v0/${base}/${table}`;
+
+  const body = {
+    records: [{
+      fields: {
+        ReservationId: id,
+        Date: deliveryDate,
+        Window: timeWindow,
+        Status: 'pending',
+        Items: itemsCount,
+        Created: new Date().toISOString(),
+      }
+    }]
+  };
+
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!r.ok) {
+    const t = await r.text();
+    console.error('Airtable reserve error', r.status, t);
+    // If reservation fails, we still allow checkout (to avoid blocking legit orders)
+    return id;
+  }
+  return id;
+}
+
+function randomId() {
+  return 'res_' + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+}

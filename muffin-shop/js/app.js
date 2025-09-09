@@ -60,6 +60,21 @@ document.querySelectorAll('a[href^="#"]').forEach(a => {
 })();
 
 /* =====================
+   A11y & Toast helpers
+   ===================== */
+const $live = document.getElementById('a11y-live');
+const $toasts = document.getElementById('toast');
+function announce(msg){ if($live){ $live.textContent=''; setTimeout(()=>{ $live.textContent=msg; }, 10);} }
+function toast(msg){
+  if(!$toasts) return;
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = msg;
+  $toasts.appendChild(el);
+  setTimeout(()=>{ el.remove(); }, 2600);
+}
+
+/* =====================
    CART (with cross-tab sync)
    ===================== */
 const CART_KEY = 'sm_cart_v1';
@@ -73,24 +88,12 @@ const $cartItemCount = document.getElementById('cart-item-count');
 const $cartClear = document.getElementById('cart-clear');
 const $cartCheckout = document.getElementById('cart-checkout');
 
-// A11y live region + toast container
-const $live = document.getElementById('a11y-live');
-const $toasts = document.getElementById('toast');
+const $date = document.getElementById('delivery-date');
+const $time = document.getElementById('delivery-time');
 
-function announce(msg){ if($live){ $live.textContent=''; setTimeout(()=>{ $live.textContent=msg; }, 10);} }
-function toast(msg){
-  if(!$toasts) return;
-  const el = document.createElement('div');
-  el.className = 'toast';
-  el.textContent = msg;
-  $toasts.appendChild(el);
-  setTimeout(()=>{ el.remove(); }, 2600);
-}
-
-/* Cross-window sync */
 const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('sm_cart') : null;
-
 let cart = [];
+
 function saveCart(){ try{ localStorage.setItem(CART_KEY, JSON.stringify(cart)); if (bc) bc.postMessage({ type: 'cart', cart }); }catch{} }
 function loadCart(){ try{ const raw=localStorage.getItem(CART_KEY); cart = raw? JSON.parse(raw):[]; }catch{ cart=[]; } }
 function cartItemsTotal(){ return cart.reduce((n,i)=>n+i.quantity,0); }
@@ -142,9 +145,8 @@ if ($cartClose) $cartClose.addEventListener('click', closeCart);
 if ($cartBackdrop) $cartBackdrop.addEventListener('click', closeCart);
 if ($cartClear) $cartClear.addEventListener('click', ()=>{ cart=[]; updateCartUI(); toast('Cart cleared'); announce('Cart cleared'); });
 
-/* Add / Buy buttons */
+/* ===== Product buttons ===== */
 function initProductButtons(){
-  // Add to cart
   document.querySelectorAll('[data-add]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const price = btn.getAttribute('data-price');
@@ -160,7 +162,7 @@ function initProductButtons(){
     });
   });
 
-  // Buy now (one-time or subscription) — Wadsworth guard
+  // Buy now -> still respects delivery date/time validation
   document.querySelectorAll('[data-buy-now]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const price = btn.getAttribute('data-price');
@@ -173,19 +175,6 @@ function initProductButtons(){
 }
 initProductButtons();
 
-/* Cart checkout (one-time only) */
-if ($cartCheckout) {
-  $cartCheckout.addEventListener('click', async () => {
-    if (!cart || cart.length === 0) { alert('Your cart is empty.'); return; }
-    const subPrice = window.PRODUCT_PRICE_MAP && window.PRODUCT_PRICE_MAP.SUBSCRIPTION;
-    const hasSub = subPrice ? cart.some(i => i.price === subPrice) : false;
-    if (hasSub) { alert('Subscriptions must be purchased separately. Use “Subscribe Now”.'); return; }
-    const bad = cart.find(i => !i.price || !String(i.price).startsWith('price_'));
-    if (bad) { alert('One or more items are missing a valid Stripe Price ID.'); return; }
-    $cartCheckout.disabled = true; try { await guardedCheckout(cart.map(({ price, quantity }) => ({ price, quantity })), 'payment'); } finally { $cartCheckout.disabled = false; }
-  });
-}
-
 /* ===== Stripe Checkout ===== */
 let stripe = null;
 function tryInitStripe() {
@@ -197,25 +186,105 @@ function tryInitStripe() {
 if (document.readyState === 'complete') { tryInitStripe(); } else { window.addEventListener('load', tryInitStripe); }
 tryInitStripe();
 
-async function goToCheckout(items, mode='payment'){
+async function goToCheckout(items, mode='payment', deliveryDate, timeWindow){
   if (!stripe){ alert('Checkout isn’t ready yet.'); return; }
   try{
-    const res = await fetch('/api/create-checkout-session', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ items, mode }) });
-    if (!res.ok){ const text = await res.text(); console.error('Checkout error', res.status, text); alert(`Checkout failed (${res.status}).`); return; }
+    const res = await fetch('/api/create-checkout-session', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ items, mode, deliveryDate, timeWindow })
+    });
+
+    if (res.status === 409) {
+      // Slot full — show suggestions if provided
+      const data = await res.json();
+      const sug = (data?.suggestions || []).join(', ');
+      toast(data?.message || 'Selected window is full.');
+      if (sug) toast(`Try: ${sug}`);
+      openCart();
+      return;
+    }
+
+    if (!res.ok){
+      const text = await res.text();
+      console.error('Checkout error', res.status, text);
+      alert(`Checkout failed (${res.status}).`);
+      return;
+    }
     const data = await res.json();
     if (data.url) window.location.href = data.url; else alert(data.error || 'No checkout URL.');
   }catch(e){ console.error('Network error:', e); alert('Network error starting checkout.'); }
 }
 
-/* Wadsworth-only guard */
+/* ===== Delivery date/time helpers (ET cutoff logic included) ===== */
+function nowETParts(){
+  const parts = new Intl.DateTimeFormat('en-US',{
+    timeZone:'America/New_York', hourCycle:'h23', hour:'2-digit', minute:'2-digit'
+  }).formatToParts(new Date());
+  const map = Object.fromEntries(parts.map(p=>[p.type,p.value]));
+  return { h: parseInt(map.hour,10), m: parseInt(map.minute,10) };
+}
+function afterCutoff(){ const {h,m} = nowETParts(); return (h > 20) || (h === 20 && m >= 30); } // 20:30 ET
+
+function initDeliveryControls(){
+  if (!$date || !$time) return;
+
+  // Minimum date: tomorrow (or day after tomorrow if after cutoff)
+  const now = new Date();
+  const min = new Date(now);
+  if (afterCutoff()) min.setDate(min.getDate() + 2);
+  else min.setDate(min.getDate() + 1);
+
+  const yyyy = min.getFullYear();
+  const mm = String(min.getMonth()+1).padStart(2,'0');
+  const dd = String(min.getDate()).padStart(2,'0');
+  const minStr = `${yyyy}-${mm}-${dd}`;
+
+  $date.min = minStr;
+  if (!$date.value) $date.value = minStr;
+
+  // Ensure placeholder exists for time
+  if ($time && !$time.value) $time.value = '';
+}
+initDeliveryControls();
+
+/* ===== Wadsworth-only + capacity-aware guarded checkout ===== */
 function isAllowedZip(zip) { return String(zip || '').trim() === '44281'; }
+
 async function guardedCheckout(items, mode='payment') {
+  // Require date/time first
+  if (!$date || !$time) { openCart(); toast('Choose delivery date & time.'); return; }
+  const deliveryDate = String($date.value || '').trim();
+  const timeWindow = String($time.value || '').trim();
+  if (!deliveryDate || !timeWindow) { openCart(); toast('Choose delivery date & time.'); return; }
+
+  // Confirm ZIP
   const zip = prompt("Enter your ZIP code to confirm delivery (Wadsworth only):", "44281");
   if (!isAllowedZip(zip)) { alert("Sorry, we currently only deliver within Wadsworth (ZIP 44281)."); return; }
-  await goToCheckout(items, mode);
+
+  // Proceed to checkout (server will block if slot is full)
+  await goToCheckout(items, mode, deliveryDate, timeWindow);
 }
 
-/* ===== Merch email capture ===== */
+/* ===== Cart checkout (one-time only from the drawer) ===== */
+if ($cartCheckout) {
+  $cartCheckout.addEventListener('click', async () => {
+    if (!cart || cart.length === 0) { alert('Your cart is empty.'); return; }
+    const subPrice = window.PRODUCT_PRICE_MAP && window.PRODUCT_PRICE_MAP.SUBSCRIPTION;
+    const hasSub = subPrice ? cart.some(i => i.price === subPrice) : false;
+    if (hasSub) { alert('Subscriptions must be purchased separately. Use “Subscribe Now”.'); return; }
+    const bad = cart.find(i => !i.price || !String(i.price).startsWith('price_'));
+    if (bad) { alert('One or more items are missing a valid Stripe Price ID.'); return; }
+    $cartCheckout.disabled = true;
+    try {
+      await guardedCheckout(cart.map(({ price, quantity }) => ({ price, quantity })), 'payment');
+    } finally {
+      $cartCheckout.disabled = false;
+    }
+  });
+}
+
+/* ===== Merch email capture (unchanged) ===== */
 (function merchSignup(){
   const form = document.getElementById('merch-form'); if (!form) return;
   const email = form.querySelector('input[type="email"]');
@@ -234,7 +303,7 @@ async function guardedCheckout(items, mode='payment') {
   });
 })();
 
-/* ===== Vote for next flavor (4 dash slots, no free text) ===== */
+/* ===== Vote form (dash-only options) ===== */
 (function voteFlavor(){
   const form = document.getElementById('vote-form'); if (!form) return;
   const msg = document.getElementById('vote-msg');
@@ -254,18 +323,8 @@ async function guardedCheckout(items, mode='payment') {
   });
 })();
 
-/* ===== Cutoff warning (America/New_York @ 20:30) ===== */
+/* ===== Cutoff warning pill in service bar (ET 20:30) ===== */
 (function cutoffWarning(){
-  function nowETParts(){
-    const parts = new Intl.DateTimeFormat('en-US',{
-      timeZone:'America/New_York',
-      hourCycle:'h23',
-      hour:'2-digit', minute:'2-digit'
-    }).formatToParts(new Date());
-    const map = Object.fromEntries(parts.map(p=>[p.type,p.value]));
-    return { h: parseInt(map.hour,10), m: parseInt(map.minute,10) };
-  }
-  function afterCutoff(){ const {h,m} = nowETParts(); return (h > 20) || (h === 20 && m >= 30); }
   function render(){
     const bar = document.querySelector('.service-bar'); if (!bar) return;
     let warn = bar.querySelector('.cutoff-msg');
@@ -281,7 +340,6 @@ async function guardedCheckout(items, mode='payment') {
     }
   }
   render();
-  // Re-check every 5 minutes
   setInterval(render, 5*60*1000);
 })();
 
