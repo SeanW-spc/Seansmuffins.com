@@ -1,5 +1,5 @@
 // js/config.js
-window.STRIPE_PUBLISHABLE_KEY = 'pk_test_...'; // your test publishable key
+window.STRIPE_PUBLISHABLE_KEY = 'pk_test_51S4aBLEhhuIMCnYGXZxOXmi9Q1wyFN1Zk5wXGrP8Aac43QuO5EqCkGYCwJBY9xy0abjA2uzR9tqjMIe3kKJtANy600kYjxMC90'; // your test publishable key
 
 // IMPORTANT: use Stripe PRICE IDs (price_...), not prod_...
 window.PRODUCT_PRICE_MAP = {
