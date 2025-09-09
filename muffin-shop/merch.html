@@ -1,0 +1,68 @@
+<!-- merch.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Merch — Sean’s Muffins</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="index.html">
+        <img class="brand-logo" src="images/logo.png" alt="Sean’s Muffins logo" />
+        <span>Sean’s Muffins</span>
+      </a>
+      <button class="nav-toggle" aria-expanded="false" aria-controls="primary-nav" aria-label="Toggle menu">
+        <span class="bar"></span><span class="bar"></span><span class="bar"></span>
+      </button>
+      <nav id="primary-nav" class="nav">
+        <a href="index.html">Home</a>
+        <a href="muffins.html">Muffins</a>
+        <a href="new-flavors.html">New Flavors</a>
+        <a class="active" href="merch.html">Merch (coming soon)</a>
+        <a href="about.html">About</a>
+      </nav>
+      <button id="cart-button" class="cart-button" aria-label="Open cart" title="Cart">
+        🧺 <span class="cart-count" id="cart-count">0</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="section">
+    <div class="container">
+      <h1>Merch Coming Soon</h1>
+      <p>Stickers, shirts, and mugs are in the works. Stay tuned!</p>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">© <span id="y"></span> Sean’s Muffins</div>
+  </footer>
+
+  <!-- Cart Drawer -->
+  <aside id="cart-drawer" class="cart-drawer" aria-hidden="true" aria-label="Shopping cart">
+    <div class="cart-header">
+      <h2>Your Cart</h2>
+      <button id="cart-close" class="cart-close" aria-label="Close cart">✕</button>
+    </div>
+    <div id="cart-items" class="cart-items"></div>
+    <div class="cart-footer">
+      <div class="cart-total-row">
+        <span>Items:</span><strong id="cart-item-count">0</strong>
+      </div>
+      <div class="cart-actions">
+        <button id="cart-clear" class="btn btn-ghost">Clear</button>
+        <button id="cart-checkout" class="btn btn-primary">Checkout</button>
+      </div>
+      <p class="cart-note">Checkout is handled securely by Stripe.</p>
+    </div>
+  </aside>
+  <div id="cart-backdrop" class="cart-backdrop" aria-hidden="true"></div>
+
+  <script src="https://js.stripe.com/v3"></script>
+  <script src="js/config.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

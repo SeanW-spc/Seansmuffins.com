@@ -2,11 +2,11 @@
    Sean’s Muffins – app.js
    ========================= */
 
-// ===== Footer year =====
+/* ===== Footer year ===== */
 const y = document.getElementById('y');
 if (y) y.textContent = new Date().getFullYear();
 
-// ===== Smooth scroll (in-page anchors) =====
+/* ===== Smooth scroll (in-page anchors) ===== */
 document.querySelectorAll('a[href^="#"]').forEach(a => {
   a.addEventListener('click', e => {
     const el = document.querySelector(a.getAttribute('href'));
@@ -16,7 +16,7 @@ document.querySelectorAll('a[href^="#"]').forEach(a => {
   });
 });
 
-// ===== Mobile nav toggle =====
+/* ===== Mobile nav toggle ===== */
 (function mobileNav(){
   const toggle = document.querySelector('.nav-toggle');
   const nav = document.getElementById('primary-nav');
@@ -27,7 +27,7 @@ document.querySelectorAll('a[href^="#"]').forEach(a => {
   nav.querySelectorAll('a').forEach(l => l.addEventListener('click', closeNav));
 })();
 
-// ===== Section background images (FAQ/Contact/Footer, etc.) =====
+/* ===== Section background images (FAQ/Contact/Footer, etc.) ===== */
 (function applySectionBGs(){
   document.querySelectorAll('.has-bg, .has-bg-optional').forEach(sec => {
     const url = sec.getAttribute('data-bg');
@@ -35,7 +35,7 @@ document.querySelectorAll('a[href^="#"]').forEach(a => {
   });
 })();
 
-// ===== Parallax hero (disabled on small screens / reduced motion) =====
+/* ===== Parallax hero (disabled on small screens / reduced motion) ===== */
 (function initParallax(){
   const sec = document.querySelector('.parallax');
   if (!sec) return;
@@ -54,7 +54,7 @@ document.querySelectorAll('a[href^="#"]').forEach(a => {
   update();
 })();
 
-// ===== Muffin tapper (for-fun counter) =====
+/* ===== Muffin tapper (for-fun counter) ===== */
 (function initMuffinTapper(){
   const btn = document.getElementById('muffin-tapper'); if (!btn) return;
   const emojiEl = btn.querySelector('.mt-emoji'); const countEl = btn.querySelector('.mt-count');
@@ -79,49 +79,84 @@ const $cartItemCount = document.getElementById('cart-item-count');
 const $cartClear = document.getElementById('cart-clear');
 const $cartCheckout = document.getElementById('cart-checkout');
 
+/* Cross-window live sync */
+const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('sm_cart') : null;
+
 // State
 let cart = [];
-function saveCart(){ try{ localStorage.setItem(CART_KEY, JSON.stringify(cart)); }catch{} }
-function loadCart(){ try{ const raw=localStorage.getItem(CART_KEY); cart = raw? JSON.parse(raw):[]; }catch{ cart=[]; } }
+
+function saveCart(){
+  try{
+    localStorage.setItem(CART_KEY, JSON.stringify(cart));
+    if (bc) bc.postMessage({ type: 'cart', cart });
+  }catch{}
+}
+
+function loadCart(){
+  try{
+    const raw=localStorage.getItem(CART_KEY);
+    cart = raw? JSON.parse(raw):[];
+  }catch{ cart=[]; }
+}
+
 function cartItemsTotal(){ return cart.reduce((n,i)=>n+i.quantity,0); }
 
 function renderCart(){
-  if (!$cartItems) return;
-  $cartItems.innerHTML = '';
-  if (cart.length === 0) {
-    $cartItems.innerHTML = '<p style="color:#6a6f76;margin:8px 0 16px;">Your cart is empty.</p>';
-  } else {
-    cart.forEach((item, idx) => {
-      const div = document.createElement('div');
-      div.className = 'cart-item';
-      div.innerHTML = `
-        <div class="cart-item-name">${item.name}</div>
-        <div class="cart-qty">
-          <button data-act="dec" aria-label="Decrease">–</button>
-          <span>${item.quantity}</span>
-          <button data-act="inc" aria-label="Increase">+</button>
-          <button data-act="remove" aria-label="Remove" title="Remove" style="margin-left:6px;border-color:#ffd3db">✕</button>
-        </div>
-      `;
-      const btnDec = div.querySelector('[data-act="dec"]');
-      const btnInc = div.querySelector('[data-act="inc"]');
-      const btnRemove = div.querySelector('[data-act="remove"]');
+  if ($cartItems) {
+    $cartItems.innerHTML = '';
+    if (cart.length === 0) {
+      $cartItems.innerHTML = '<p style="color:#6a6f76;margin:8px 0 16px;">Your cart is empty.</p>';
+    } else {
+      cart.forEach((item, idx) => {
+        const div = document.createElement('div');
+        div.className = 'cart-item';
+        div.innerHTML = `
+          <div class="cart-item-name">${item.name}</div>
+          <div class="cart-qty">
+            <button data-act="dec" aria-label="Decrease">–</button>
+            <span>${item.quantity}</span>
+            <button data-act="inc" aria-label="Increase">+</button>
+            <button data-act="remove" aria-label="Remove" title="Remove" style="margin-left:6px;border-color:#ffd3db">✕</button>
+          </div>
+        `;
+        const btnDec = div.querySelector('[data-act="dec"]');
+        const btnInc = div.querySelector('[data-act="inc"]');
+        const btnRemove = div.querySelector('[data-act="remove"]');
 
-      if (btnDec) btnDec.addEventListener('click', () => { item.quantity = Math.max(1, item.quantity-1); updateCartUI(); });
-      if (btnInc) btnInc.addEventListener('click', () => { item.quantity += 1; updateCartUI(); });
-      if (btnRemove) btnRemove.addEventListener('click', () => { cart.splice(idx,1); updateCartUI(); });
+        if (btnDec) btnDec.addEventListener('click', () => { item.quantity = Math.max(1, item.quantity-1); updateCartUI(); });
+        if (btnInc) btnInc.addEventListener('click', () => { item.quantity += 1; updateCartUI(); });
+        if (btnRemove) btnRemove.addEventListener('click', () => { cart.splice(idx,1); updateCartUI(); });
 
-      $cartItems.appendChild(div);
-    });
+        $cartItems.appendChild(div);
+      });
+    }
   }
   const totalItems = cartItemsTotal();
   if ($cartCount) $cartCount.textContent = String(totalItems);
   if ($cartItemCount) $cartItemCount.textContent = String(totalItems);
   saveCart();
 }
+
 function updateCartUI(){ renderCart(); }
 
-// Open/close drawer
+/* Cross-window listeners */
+if (bc) {
+  bc.onmessage = (ev) => {
+    if (ev?.data?.type === 'cart') {
+      cart = Array.isArray(ev.data.cart) ? ev.data.cart : [];
+      renderCart();
+    }
+  };
+}
+window.addEventListener('storage', (e) => {
+  if (e.key === CART_KEY) {
+    try { cart = e.newValue ? JSON.parse(e.newValue) : []; }
+    catch { cart = []; }
+    renderCart();
+  }
+});
+
+/* Open/close drawer */
 function openCart(){ if($cartDrawer){ $cartDrawer.classList.add('open'); } if($cartBackdrop){ $cartBackdrop.classList.add('open'); } document.body.style.overflow='hidden'; }
 function closeCart(){ if($cartDrawer){ $cartDrawer.classList.remove('open'); } if($cartBackdrop){ $cartBackdrop.classList.remove('open'); } document.body.style.overflow=''; }
 
@@ -130,7 +165,7 @@ if ($cartClose) $cartClose.addEventListener('click', closeCart);
 if ($cartBackdrop) $cartBackdrop.addEventListener('click', closeCart);
 if ($cartClear) $cartClear.addEventListener('click', ()=>{ cart=[]; updateCartUI(); });
 
-// Add / Buy buttons
+/* Add / Buy buttons */
 function initProductButtons(){
   // Add to cart
   document.querySelectorAll('[data-add]').forEach(btn=>{
@@ -145,20 +180,20 @@ function initProductButtons(){
     });
   });
 
-  // Buy now (one-time or subscription)
+  // Buy now (one-time or subscription) — guarded by Wadsworth ZIP
   document.querySelectorAll('[data-buy-now]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const price = btn.getAttribute('data-price');
       const qty = parseInt(btn.getAttribute('data-qty')||'1',10);
       const mode = (btn.getAttribute('data-mode') || 'payment').toLowerCase(); // 'payment' or 'subscription'
       if (!price){ alert('Missing price id'); return; }
-      await goToCheckout([{ price, quantity: Math.max(1, qty) }], mode);
+      await guardedCheckout([{ price, quantity: Math.max(1, qty) }], mode);
     });
   });
 }
 initProductButtons();
 
-// Cart "Checkout" button (one-time only)
+/* Cart "Checkout" (one-time only) — guarded by Wadsworth ZIP */
 if ($cartCheckout) {
   $cartCheckout.addEventListener('click', async () => {
     if (!cart || cart.length === 0) {
@@ -177,7 +212,7 @@ if ($cartCheckout) {
 
     $cartCheckout.disabled = true;
     try {
-      await goToCheckout(cart.map(({ price, quantity }) => ({ price, quantity })), 'payment');
+      await guardedCheckout(cart.map(({ price, quantity }) => ({ price, quantity })), 'payment');
     } finally {
       $cartCheckout.disabled = false;
     }
@@ -234,5 +269,20 @@ async function goToCheckout(items, mode='payment'){
     alert('Network error starting checkout.');
   }
 }
+
+/* ====== Wadsworth-only guard before starting checkout ====== */
+function isAllowedZip(zip) {
+  return String(zip || '').trim() === '44281';
+}
+async function guardedCheckout(items, mode='payment') {
+  const zip = prompt("Enter your ZIP code to confirm delivery (Wadsworth only):", "44281");
+  if (!isAllowedZip(zip)) {
+    alert("Sorry, we currently only deliver within Wadsworth (ZIP 44281).");
+    return;
+  }
+  await goToCheckout(items, mode);
+}
+
+/* ===== Init ===== */
 loadCart();
 renderCart();

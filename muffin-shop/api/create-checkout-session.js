@@ -41,7 +41,7 @@ module.exports = async (req, res) => {
       shipping_address_collection: { allowed_countries: ['US'] },
       phone_number_collection: { enabled: true },
 
-      // 👇 NEW: collect delivery date + preferred time window
+      // Collect delivery date + preferred time window in Checkout
       custom_fields: [
         {
           key: 'delivery_date',
@@ -65,9 +65,6 @@ module.exports = async (req, res) => {
           }
         }
       ],
-
-      // (Nice to have: mirror into metadata too)
-      // metadata: { delivery_date: tomorrowISO(), preferred_window: '7:30–8:30 AM' },
 
       success_url: `${baseUrl}/index.html?checkout=success`,
       cancel_url: `${baseUrl}/index.html?checkout=cancel`

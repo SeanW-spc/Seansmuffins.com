@@ -19,14 +19,15 @@
         <span>Sean’s Muffins</span>
       </a>
 
-      <!-- Mobile toggle -->
       <button class="nav-toggle" aria-expanded="false" aria-controls="primary-nav" aria-label="Toggle menu">
         <span class="bar"></span><span class="bar"></span><span class="bar"></span>
       </button>
 
       <nav id="primary-nav" class="nav">
-        <a href="#shop">Shop</a>
-        <a href="#how">How it works</a>
+        <a class="active" href="index.html">Home</a>
+        <a href="muffins.html">Muffins</a>
+        <a href="new-flavors.html">New Flavors</a>
+        <a href="merch.html">Merch (coming soon)</a>
         <a href="#faq">FAQ</a>
         <a href="#contact">Contact</a>
         <a href="about.html">About</a>
@@ -45,6 +46,9 @@
     <div class="container hero-inner">
       <div class="hero-copy">
         <h1>Fresh morning muffins, delivered locally.</h1>
+        <p style="color:#b33;font-weight:600; margin:6px 0 8px;">
+          🚨 We currently deliver only within Wadsworth, Ohio (ZIP 44281).
+        </p>
         <p>Small-batch, baked at dawn. Pick a box, choose your delivery window, and we’ll bring breakfast to you.</p>
         <div class="hero-cta">
           <a class="btn btn-primary" href="#shop">Shop Muffin Boxes</a>
@@ -101,14 +105,16 @@
                 data-price="price_1S4xTIEhhuIMCnYGJkLqyqCj"
                 data-name="Weekly Muffin Box">Add to Cart</button>
             </div>
-            <p class="hint">Tip: In Stripe Checkout settings, enable shipping address and add a custom field like “Preferred delivery time range”.</p>
+            <p class="product-desc" style="margin-top:10px; color:#6a6f76;">
+              Note: Delivery is currently available in <strong>Wadsworth (44281)</strong> only.
+            </p>
           </div>
           <div class="product-art" aria-hidden="true">
             <div class="box box-a"></div><div class="box box-b"></div>
           </div>
         </article>
 
-        <!-- One-time boxes -->
+        <!-- One-time boxes (unchanged) -->
         <div class="grid">
           <article class="product card">
             <div class="thumb-wrap"><img loading="lazy" src="images/blueberry.jpg" alt="Blueberry Muffin Box (4)" class="thumb-img"></div>
@@ -179,7 +185,7 @@
         <h2 class="section-title">Frequently Asked Questions</h2>
         <div class="faq-list">
           <article class="faq-item"><h3>How do I place an order?</h3><p>Select a muffin box and check out securely with Stripe. You’ll receive a confirmation email and delivery details.</p></article>
-          <article class="faq-item"><h3>Do you offer delivery?</h3><p>Yes! Delivery is our preferred method. Currently, delivery is available in Wadsworth and bordering cities.</p></article>
+          <article class="faq-item"><h3>Do you offer delivery?</h3><p>Yes! Delivery is our preferred method. Currently, delivery is available in <strong>Wadsworth (44281)</strong> only.</p></article>
           <article class="faq-item"><h3>How do I subscribe to consistent deliveries?</h3><p>Not yet available.</p></article>
           <article class="faq-item"><h3>Can I schedule a delivery in advance?</h3><p>Absolutely! Ordering ahead guarantees availability and lets us plan your route.</p></article>
           <article class="faq-item"><h3>Do you offer pickup?</h3><p>Not at this time — our focus is convenient morning delivery.</p></article>
@@ -191,7 +197,7 @@
     <section class="section contact has-bg" id="contact" aria-label="Contact" data-bg="images/contact-bg.jpg">
       <div class="container">
         <h2 class="section-title">Contact Us</h2>
-        <p class="contact-intro">Questions about your order? Want to share feedback? Reach out anytime.</p>
+      <p class="contact-intro">Questions about your order? Want to share feedback? Reach out anytime.</p>
         <div class="contact-grid">
           <div class="contact-card"><h3>Email</h3><p><a href="mailto:the.muffin.man.7b@gmail.com">the.muffin.man.7b@gmail.com</a></p></div>
           <div class="contact-card"><h3>Phone</h3><p><a href="tel:13305731074">(330) 573-1074</a></p></div>
@@ -230,16 +236,12 @@
   </aside>
   <div id="cart-backdrop" class="cart-backdrop" aria-hidden="true"></div>
 
-  <!-- Muffin tapper -->
   <button id="muffin-tapper" aria-label="Just for fun: muffin tapper" title="Tap me!">
     <span class="mt-emoji" aria-hidden="true">🧁</span><span class="mt-count" aria-live="polite">0</span>
   </button>
 
-  <!-- Load Stripe first (no async/defer) -->
   <script src="https://js.stripe.com/v3"></script>
-  <!-- Config (keys + PRICE IDs) -->
   <script src="js/config.js"></script>
-  <!-- App logic last -->
   <script src="js/app.js"></script>
 </body>
 </html>
