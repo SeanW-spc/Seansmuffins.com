@@ -264,3 +264,56 @@ body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,s
   font-weight:800; color:#8a1f1f; background:#ffe9e9;
   border:1px solid #ffd5d5; padding:4px 8px; border-radius:999px;
 }
+
+/* ===== Floating Muffin Tapper (bottom-right) ===== */
+#muffin-tapper{
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  width: 56px;
+  height: 56px;
+  border-radius: 9999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  box-shadow: var(--shadow);
+  display: grid;
+  place-items: center;
+  gap: 0;
+  cursor: pointer;
+  z-index: 79; /* under cart backdrop (80) & drawer (81); raise to 82 if you want it above */
+  padding: 0;
+  line-height: 1;
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+#muffin-tapper:hover { transform: translateY(-1px); }
+#muffin-tapper:active { transform: translateY(0); }
+
+/* Click “pop” feedback (app.js toggles .pop on click) */
+#muffin-tapper.pop { transform: scale(1.08); }
+
+/* Emoji + counter badge */
+#muffin-tapper .mt-emoji{ font-size: 26px; }
+#muffin-tapper .mt-count{
+  position: absolute;
+  top: -6px; right: -6px;
+  min-width: 22px; height: 22px;
+  padding: 0 6px;
+  border-radius: 9999px;
+  background: var(--accent-2);
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+  display: grid; place-items: center;
+  border: 1px solid #fff3;
+  box-shadow: 0 4px 10px rgba(0,0,0,.08);
+}
+
+/* Compact spacing on very small screens */
+@media (max-width: 480px){
+  #muffin-tapper{ right: 14px; bottom: 14px; width: 52px; height: 52px; }
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce){
+  #muffin-tapper{ transition: none; }
+}
