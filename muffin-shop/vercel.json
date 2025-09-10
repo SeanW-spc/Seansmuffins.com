@@ -15,10 +15,5 @@
         { "key": "Permissions-Policy", "value": "interest-cohort=()" }
       ]
     }
-  ],
-  "functions": {
-    "api/**/*.js": {
-      "runtime": "nodejs20.x"
-    }
-  }
+  ]
 }
