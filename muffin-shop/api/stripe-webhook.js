@@ -1,7 +1,6 @@
 // api/stripe-webhook.js
 // Confirms/cancels Airtable reservations AND creates an Orders row after payment.
-// Also captures "order_notes" from either site metadata or Stripe custom field.
-// If Airtable rejects an unknown field (e.g., notes), we retry without it.
+// More robust: if Airtable rejects fields (422), we retry with a minimal safe set.
 
 import Stripe from 'stripe';
 
@@ -41,36 +40,25 @@ export default async function handler(req, res) {
   try {
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object;
-
-      // Retrieve full session with line items (custom_fields are already on session)
       const full = await stripe.checkout.sessions.retrieve(session.id, { expand: ['line_items'] });
 
-      // 1) Create the Airtable Order (unassigned)
-      await createAirtableOrder(full);
-
-      // 2) Confirm the Slot reservation
-      await markReservation(session?.metadata?.reservationId, 'confirmed', session?.id);
+      await createAirtableOrder(full); // insert into Orders
+      await markReservation(session?.metadata?.reservationId, 'confirmed', session?.id); // confirm slot
     } else if (event.type === 'checkout.session.expired') {
       const session = event.data.object;
       await markReservation(session?.metadata?.reservationId, 'expired', session?.id);
     }
   } catch (e) {
     console.error('Webhook handler error', e);
-    // Return 200 so Stripe doesn't retry forever if Airtable hiccups.
+    // Still return 200 so Stripe doesn't retry forever
   }
 
   res.status(200).json({ received: true });
 }
 
-/* ===========================
-   Airtable helpers for SLOTS
-   =========================== */
+/* ===== Slots helpers ===== */
 function hasAirtableSlotsConfig() {
-  return Boolean(
-    process.env.AIRTABLE_API_KEY &&
-    process.env.AIRTABLE_BASE_ID &&
-    process.env.AIRTABLE_TABLE_SLOTS
-  );
+  return Boolean(process.env.AIRTABLE_API_KEY && process.env.AIRTABLE_BASE_ID && process.env.AIRTABLE_TABLE_SLOTS);
 }
 
 async function markReservation(reservationId, status, sessionId) {
@@ -84,7 +72,7 @@ async function markReservation(reservationId, status, sessionId) {
   const findUrl = new URL(url);
   findUrl.searchParams.set('filterByFormula', `({ReservationId}='${reservationId}')`);
   const r = await fetch(findUrl.toString(), { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } });
-  if (!r.ok) { console.error('Airtable find failed', r.status); return; }
+  if (!r.ok) { console.error('Airtable find failed', r.status, await r.text().catch(()=>'')); return; }
   const data = await r.json();
   const rec = (data.records || [])[0];
   if (!rec) return;
@@ -106,38 +94,27 @@ async function markReservation(reservationId, status, sessionId) {
       }]
     })
   });
-  if (!upd.ok) console.error('Airtable update failed', upd.status, await upd.text());
+  if (!upd.ok) console.error('Airtable update failed', upd.status, await upd.text().catch(()=>'')); 
 }
 
-/* ===========================
-   Airtable helpers for ORDERS
-   =========================== */
+/* ===== Orders helpers ===== */
 function hasAirtableOrdersConfig() {
-  return Boolean(
-    process.env.AIRTABLE_API_KEY &&
-    process.env.AIRTABLE_BASE_ID &&
-    (process.env.AIRTABLE_TABLE_NAME || 'Orders')
-  );
+  return Boolean(process.env.AIRTABLE_API_KEY && process.env.AIRTABLE_BASE_ID && (process.env.AIRTABLE_TABLE_NAME || 'Orders'));
 }
 
 function toE164Maybe(phone) {
   if (!phone) return '';
   const digits = String(phone).replace(/[^\d+]/g, '');
   if (digits.startsWith('+')) return digits;
-  // US default
   if (digits.length === 10) return `+1${digits}`;
   return digits;
 }
-
 function compactAddress(obj) {
   if (!obj || !obj.address) return '';
   const a = obj.address;
-  const parts = [
-    a.line1, a.line2, a.city, a.state, a.postal_code, a.country
-  ].filter(Boolean);
+  const parts = [a.line1, a.line2, a.city, a.state, a.postal_code, a.country].filter(Boolean);
   return parts.join(', ');
 }
-
 function getCustomFieldText(session, key) {
   try {
     const f = (session.custom_fields || []).find(cf => cf.key === key);
@@ -164,12 +141,12 @@ async function createAirtableOrder(session) {
     return `${name} x${qty}`;
   }).join(', ');
 
-  // Combine site-provided notes (metadata.order_notes) + Stripe custom field (order_notes)
   const notesMeta = (session.metadata?.order_notes || '').trim();
   const notesCF   = (getCustomFieldText(session, 'order_notes') || '').trim();
   const combinedNotes = [notesMeta, notesCF].filter(Boolean).join(' | ').slice(0, 1000);
 
-  const fields = {
+  // Full field set (preferred)
+  const fullFields = {
     delivery_date: session.metadata?.deliveryDate || '',
     preferred_window: session.metadata?.timeWindow || '',
     status: 'unassigned',
@@ -186,22 +163,37 @@ async function createAirtableOrder(session) {
     stripe_session_id: session.id,
     created: new Date().toISOString(),
   };
+  if (combinedNotes) fullFields.notes = combinedNotes;
 
-  if (combinedNotes) fields.notes = combinedNotes; // only include if present
+  // Minimal fallback (works even if single-selects / currency mismatch)
+  const minimalFields = {
+    customer_name: fullFields.customer_name,
+    email: fullFields.email,
+    phone: fullFields.phone,
+    address: fullFields.address,
+    items,
+    stripe_session_id: session.id,
+    created: fullFields.created,
+  };
+  if (session.metadata?.deliveryDate) minimalFields.delivery_date = session.metadata.deliveryDate;
+  if (session.metadata?.timeWindow) minimalFields.preferred_window = session.metadata.timeWindow;
+  if (combinedNotes) minimalFields.notes = combinedNotes;
 
-  // Try creating with notes; if Airtable rejects unknown field, retry without notes
-  let body = { records: [{ fields }] };
+  // Try full
+  let body = { records: [{ fields: fullFields }] };
   let r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
 
-  if (!r.ok && r.status === 422 && fields.notes) {
-    // Remove notes and try again
-    delete fields.notes;
-    body = { records: [{ fields }] };
-    const r2 = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
-    if (!r2.ok) {
-      console.error('Airtable order create failed (retry)', r2.status, await r2.text());
+  if (!r.ok) {
+    const txt = await r.text().catch(()=> '');
+    console.error('Airtable order create (full) failed', r.status, txt);
+
+    // If it's a validation error (422), retry with minimal
+    if (r.status === 422) {
+      body = { records: [{ fields: minimalFields }] };
+      const r2 = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      if (!r2.ok) {
+        console.error('Airtable order create (minimal) failed', r2.status, await r2.text().catch(()=> ''));
+      }
     }
-  } else if (!r.ok) {
-    console.error('Airtable order create failed', r.status, await r.text());
   }
 }
