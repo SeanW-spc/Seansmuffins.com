@@ -1,5 +1,5 @@
 // api/stripe-webhook.js
-// Inserts into Orders with progressive fallbacks so it succeeds even if fields differ.
+// Inserts into Orders with progressive fallbacks (no 'created' field sent).
 // Also confirms/expires Slot reservations.
 
 import Stripe from 'stripe';
@@ -142,8 +142,9 @@ async function upsertOrderWithFallbacks(session) {
   const notesCF   = (getCustomFieldText(session, 'order_notes') || '').trim();
   const notes = [notesMeta, notesCF].filter(Boolean).join(' | ').slice(0, 1000);
 
+  // Try these payloads in order until one succeeds (no 'created' anywhere):
   const attempts = [
-    // A) Full feature set
+    // 1) Full (may fail if your table lacks fields or single-select options)
     {
       fields: {
         stripe_session_id: session.id,
@@ -158,11 +159,10 @@ async function upsertOrderWithFallbacks(session) {
         address: compactAddress(shipping),
         items: itemsStr,
         total: (session.amount_total ?? 0) / 100,
-        created: new Date().toISOString(),
         ...(notes ? { notes } : {}),
       }
     },
-    // B) Without optional fields most likely to 422
+    // 2) Medium (remove status/items/route/delivery_time)
     {
       fields: {
         stripe_session_id: session.id,
@@ -173,17 +173,23 @@ async function upsertOrderWithFallbacks(session) {
         phone: toE164Maybe(cd.phone || ''),
         address: compactAddress(shipping),
         total: (session.amount_total ?? 0) / 100,
-        created: new Date().toISOString(),
         ...(notes ? { notes } : {}),
       }
     },
-    // C) Minimal
+    // 3) Minimal A (might still fail if email/address fields don't exist)
     {
       fields: {
         stripe_session_id: session.id,
         customer_name: cd.name || shipping.name || '',
         email: cd.email || '',
-        created: new Date().toISOString(),
+        ...(notes ? { notes } : {}),
+      }
+    },
+    // 4) Minimal B (bare minimum: should work on almost any table)
+    {
+      fields: {
+        stripe_session_id: session.id,
+        customer_name: cd.name || shipping.name || '',
         ...(notes ? { notes } : {}),
       }
     }
@@ -198,6 +204,6 @@ async function upsertOrderWithFallbacks(session) {
     }
     const txt = await r.text().catch(()=> '');
     console.error(`Airtable Orders insert failed (attempt ${i+1})`, r.status, txt);
-    if (r.status !== 422 && r.status !== 400) break;
+    if (r.status !== 422 && r.status !== 400) break; // only step down on validation-ish errors
   }
 }
