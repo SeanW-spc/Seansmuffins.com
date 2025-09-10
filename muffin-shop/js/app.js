@@ -180,6 +180,7 @@ function promptDeliveryDetails(){
     const dateInput = el.querySelector('#bn-date');
     const timeSel   = el.querySelector('#bn-time');
     const notesEl   = el.querySelector('#bn-notes');
+    if (typeof $notes !== 'undefined' && $notes && $notes.value) { notesEl.value = $notes.value; }
     el.querySelector('[data-continue]').addEventListener('click', ()=>{
       const d = dateInput.value;
       const t = timeSel.value;
