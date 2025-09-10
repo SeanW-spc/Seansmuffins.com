@@ -1,6 +1,5 @@
 // api/stripe-webhook.js
 // Confirms/cancels Airtable reservations AND creates an Orders row after payment.
-// More robust: if Airtable rejects fields (422), we retry with a minimal safe set.
 
 import Stripe from 'stripe';
 
@@ -39,30 +38,27 @@ export default async function handler(req, res) {
 
   try {
     if (event.type === 'checkout.session.completed') {
-      const session = event.data.object;
-      const full = await stripe.checkout.sessions.retrieve(session.id, { expand: ['line_items'] });
-
-      await createAirtableOrder(full); // insert into Orders
-      await markReservation(session?.metadata?.reservationId, 'confirmed', session?.id); // confirm slot
+      const session = await stripe.checkout.sessions.retrieve(event.data.object.id, { expand: ['line_items'] });
+      await createAirtableOrder(session); // <— insert Orders row
+      await markReservation(session?.metadata?.reservationId, 'confirmed', session?.id);
     } else if (event.type === 'checkout.session.expired') {
       const session = event.data.object;
       await markReservation(session?.metadata?.reservationId, 'expired', session?.id);
     }
   } catch (e) {
     console.error('Webhook handler error', e);
-    // Still return 200 so Stripe doesn't retry forever
+    // Return 200 anyway so Stripe doesn’t hammer retries
   }
 
   res.status(200).json({ received: true });
 }
 
 /* ===== Slots helpers ===== */
-function hasAirtableSlotsConfig() {
-  return Boolean(process.env.AIRTABLE_API_KEY && process.env.AIRTABLE_BASE_ID && process.env.AIRTABLE_TABLE_SLOTS);
+function hasSlotsEnv() {
+  return !!(process.env.AIRTABLE_API_KEY && process.env.AIRTABLE_BASE_ID && process.env.AIRTABLE_TABLE_SLOTS);
 }
-
 async function markReservation(reservationId, status, sessionId) {
-  if (!reservationId || !hasAirtableSlotsConfig()) return;
+  if (!reservationId || !hasSlotsEnv()) return;
 
   const table = encodeURIComponent(process.env.AIRTABLE_TABLE_SLOTS);
   const base = process.env.AIRTABLE_BASE_ID;
@@ -97,23 +93,21 @@ async function markReservation(reservationId, status, sessionId) {
   if (!upd.ok) console.error('Airtable update failed', upd.status, await upd.text().catch(()=>'')); 
 }
 
-/* ===== Orders helpers ===== */
-function hasAirtableOrdersConfig() {
-  return Boolean(process.env.AIRTABLE_API_KEY && process.env.AIRTABLE_BASE_ID && (process.env.AIRTABLE_TABLE_NAME || 'Orders'));
+/* ===== Orders insert ===== */
+function hasOrdersEnv() {
+  return !!(process.env.AIRTABLE_API_KEY && process.env.AIRTABLE_BASE_ID && (process.env.AIRTABLE_TABLE_NAME || 'Orders'));
 }
-
 function toE164Maybe(phone) {
   if (!phone) return '';
-  const digits = String(phone).replace(/[^\d+]/g, '');
-  if (digits.startsWith('+')) return digits;
-  if (digits.length === 10) return `+1${digits}`;
-  return digits;
+  const d = String(phone).replace(/[^\d+]/g, '');
+  if (d.startsWith('+')) return d;
+  if (d.length === 10) return `+1${d}`;
+  return d;
 }
 function compactAddress(obj) {
   if (!obj || !obj.address) return '';
   const a = obj.address;
-  const parts = [a.line1, a.line2, a.city, a.state, a.postal_code, a.country].filter(Boolean);
-  return parts.join(', ');
+  return [a.line1, a.line2, a.city, a.state, a.postal_code, a.country].filter(Boolean).join(', ');
 }
 function getCustomFieldText(session, key) {
   try {
@@ -121,9 +115,8 @@ function getCustomFieldText(session, key) {
     return f && f.type === 'text' && f.text && typeof f.text.value === 'string' ? f.text.value : '';
   } catch { return ''; }
 }
-
 async function createAirtableOrder(session) {
-  if (!hasAirtableOrdersConfig()) return;
+  if (!hasOrdersEnv()) return;
 
   const base = process.env.AIRTABLE_BASE_ID;
   const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || 'Orders');
@@ -135,65 +128,30 @@ async function createAirtableOrder(session) {
 
   const cd = session.customer_details || {};
   const shipping = session.shipping_details || {};
-  const items = (session.line_items?.data || []).map(li => {
-    const name = li.description || (li.price?.nickname || 'Item');
-    const qty = li.quantity || 1;
-    return `${name} x${qty}`;
-  }).join(', ');
 
+  // Notes may come from metadata (site popup) or Stripe custom field (if shown)
   const notesMeta = (session.metadata?.order_notes || '').trim();
   const notesCF   = (getCustomFieldText(session, 'order_notes') || '').trim();
-  const combinedNotes = [notesMeta, notesCF].filter(Boolean).join(' | ').slice(0, 1000);
+  const notes = [notesMeta, notesCF].filter(Boolean).join(' | ').slice(0, 1000);
 
-  // Full field set (preferred)
-  const fullFields = {
+  const fields = {
+    // keep these simple so your current table accepts them
+    stripe_session_id: session.id,
     delivery_date: session.metadata?.deliveryDate || '',
     preferred_window: session.metadata?.timeWindow || '',
-    status: 'unassigned',
-    delivery_time: '',
-    route_position: null,
-
     customer_name: cd.name || shipping.name || '',
     email: cd.email || '',
     phone: toE164Maybe(cd.phone || ''),
-
     address: compactAddress(shipping),
-    items,
     total: (session.amount_total ?? 0) / 100,
-    stripe_session_id: session.id,
     created: new Date().toISOString(),
   };
-  if (combinedNotes) fullFields.notes = combinedNotes;
+  if (notes) fields.notes = notes;
 
-  // Minimal fallback (works even if single-selects / currency mismatch)
-  const minimalFields = {
-    customer_name: fullFields.customer_name,
-    email: fullFields.email,
-    phone: fullFields.phone,
-    address: fullFields.address,
-    items,
-    stripe_session_id: session.id,
-    created: fullFields.created,
-  };
-  if (session.metadata?.deliveryDate) minimalFields.delivery_date = session.metadata.deliveryDate;
-  if (session.metadata?.timeWindow) minimalFields.preferred_window = session.metadata.timeWindow;
-  if (combinedNotes) minimalFields.notes = combinedNotes;
-
-  // Try full
-  let body = { records: [{ fields: fullFields }] };
-  let r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
-
+  const body = { records: [{ fields }] };
+  const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
   if (!r.ok) {
-    const txt = await r.text().catch(()=> '');
-    console.error('Airtable order create (full) failed', r.status, txt);
-
-    // If it's a validation error (422), retry with minimal
-    if (r.status === 422) {
-      body = { records: [{ fields: minimalFields }] };
-      const r2 = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
-      if (!r2.ok) {
-        console.error('Airtable order create (minimal) failed', r2.status, await r2.text().catch(()=> ''));
-      }
-    }
+    const t = await r.text().catch(()=> '');
+    console.error('Airtable order insert failed', r.status, t);
   }
 }
