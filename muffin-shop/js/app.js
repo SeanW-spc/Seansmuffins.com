@@ -1,72 +1,39 @@
 /* =========================
-   Sean’s Muffins – app.js
+   Sean’s Muffins – app.js (FULL FILE)
+   Paste this entire file over your existing js/app.js
    ========================= */
 
-// ===== Footer year =====
+/* ===== Small helpers ===== */
+const $ = (sel, root=document) => root.querySelector(sel);
+const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+
+/* ===== Footer year ===== */
 const y = document.getElementById('y'); if (y) y.textContent = new Date().getFullYear();
 
-// ===== Smooth scroll =====
-document.querySelectorAll('a[href^="#"]').forEach(a => {
+/* ===== Smooth scroll for on-page anchors ===== */
+$$('a[href^="#"]').forEach(a => {
   a.addEventListener('click', e => {
-    const el = document.querySelector(a.getAttribute('href'));
-    if (!el) return;
+    const target = document.querySelector(a.getAttribute('href'));
+    if (!target) return;
     e.preventDefault();
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 });
 
-// ===== Mobile nav toggle =====
-(function mobileNav(){
-  const toggle = document.querySelector('.nav-toggle');
-  const nav = document.getElementById('primary-nav');
-  if (!toggle || !nav) return;
-  function closeNav(){ toggle.setAttribute('aria-expanded','false'); nav.classList.remove('open'); document.body.style.overflow=''; }
-  function openNav(){ toggle.setAttribute('aria-expanded','true'); nav.classList.add('open'); document.body.style.overflow='hidden'; }
-  toggle.addEventListener('click', () => (toggle.getAttribute('aria-expanded')==='true'?closeNav():openNav()));
-  nav.querySelectorAll('a').forEach(l => l.addEventListener('click', closeNav));
-})();
-
-// ===== Section BGs =====
-(function applySectionBGs(){
-  document.querySelectorAll('.has-bg, .has-bg-optional').forEach(sec => {
-    const url = sec.getAttribute('data-bg');
-    if (url) sec.style.backgroundImage = `url("${url}")`;
-  });
-})();
-
-// ===== Parallax (desktop only) =====
-(function initParallax(){
-  const sec = document.querySelector('.parallax'); if (!sec) return;
-  const bg = sec.querySelector('.parallax-bg'); const url = sec.getAttribute('data-bg');
-  if (bg && url) bg.style.backgroundImage = `url("${url}")`;
-  else if (url){ sec.style.backgroundImage = `url("${url}")`; sec.style.backgroundSize='cover'; sec.style.backgroundPosition='center'; }
-  const prefersReduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const isSmall = matchMedia('(max-width: 980px)').matches; if (prefersReduced || isSmall || !bg) return;
-  let ticking=false; const speed=0.25;
-  function update(){ const r=sec.getBoundingClientRect(); bg.style.transform=`translate3d(0, ${-r.top*speed}px, 0)`; ticking=false; }
-  function onScroll(){ if(!ticking){ requestAnimationFrame(update); ticking=true; } }
-  addEventListener('scroll', onScroll, {passive:true}); addEventListener('resize', onScroll, {passive:true}); update();
-})();
-
-// ===== Muffin tapper (for-fun) =====
-(function initMuffinTapper(){
-  const btn = document.getElementById('muffin-tapper'); if (!btn) return;
-  const emojiEl = btn.querySelector('.mt-emoji'); const countEl = btn.querySelector('.mt-count');
-  const KEY='muffin_tapper_count_v1'; const EMOJIS=['🧁','🧁✨','🧁🍫','🧁💙','🧁🍌','🧁🌰'];
-  if (emojiEl) emojiEl.textContent = EMOJIS[Math.floor(Math.random()*EMOJIS.length)];
-  let count = 0; try{ const saved=localStorage.getItem(KEY); if(saved) count=Math.max(0,parseInt(saved,10)||0);}catch{}
-  if (countEl) countEl.textContent=String(count);
-  btn.addEventListener('click',()=>{ count+=1; if(countEl) countEl.textContent=String(count); try{localStorage.setItem(KEY,String(count));}catch{} btn.classList.add('bump'); setTimeout(()=>btn.classList.remove('bump'),120); });
-})();
-
-/* =====================
-   A11y & Toast helpers
-   ===================== */
+/* ===== A11y live announcements + toasts ===== */
 const $live = document.getElementById('a11y-live');
 const $toasts = document.getElementById('toast');
-function announce(msg){ if($live){ $live.textContent=''; setTimeout(()=>{ $live.textContent=msg; }, 10);} }
+
+function announce(msg){
+  try{
+    if ($live){
+      $live.textContent = '';
+      setTimeout(()=>{ $live.textContent = msg; }, 10);
+    }
+  }catch{}
+}
 function toast(msg){
-  if(!$toasts) return;
+  if (!$toasts) { alert(msg); return; }
   const el = document.createElement('div');
   el.className = 'toast';
   el.textContent = msg;
@@ -75,13 +42,10 @@ function toast(msg){
 }
 
 /* =====================
-   CART (with cross-tab sync)
+   CART (with cross-tab sync + flicker fix)
    ===================== */
-/* =====================
-   CART (with cross-tab sync)
-   ===================== */
-const CLIENT_ID = Math.random().toString(36).slice(2); // identify this tab
-const CART_KEY = 'sm_cart_v1';
+const CLIENT_ID = Math.random().toString(36).slice(2);
+const CART_KEY  = 'sm_cart_v1';
 
 const $cartBtn       = document.getElementById('cart-button');
 const $cartDrawer    = document.getElementById('cart-drawer');
@@ -99,93 +63,85 @@ const $time = document.getElementById('delivery-time');
 const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('sm_cart') : null;
 let cart = [];
 
-function saveCart() {
-  try {
-    localStorage.setItem(CART_KEY, JSON.stringify(cart));
-    // Broadcast to other tabs (but tag with sender id)
-    if (bc) bc.postMessage({ type: 'cart', from: CLIENT_ID, cart: cart.map(i => ({ ...i })) });
-  } catch {}
-}
+/* Windows should match backend's list for suggestions */
+function getWindows(){ return ['6:00–7:00 AM', '7:00–8:00 AM', '8:00–9:00 AM']; }
 
-function loadCart() {
-  try {
+function loadCart(){
+  try{
     const raw = localStorage.getItem(CART_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
     cart = Array.isArray(parsed) ? parsed : [];
-  } catch {
-    cart = [];
-  }
+  }catch{ cart = []; }
+}
+function saveCart(){
+  try{
+    localStorage.setItem(CART_KEY, JSON.stringify(cart));
+    if (bc) bc.postMessage({ type:'cart', from: CLIENT_ID, cart: cart.map(i=>({...i})) });
+  }catch{}
 }
 
-function cartItemsTotal() {
-  return cart.reduce((n, i) => n + (parseInt(i.quantity || 0, 10) || 0), 0);
-}
+function cartItemsTotal(){ return cart.reduce((n,i)=> n + (parseInt(i.quantity||0,10) || 0), 0); }
 
-function renderCart(noSave = false) {
-  if ($cartItems) {
+function renderCart(noSave=false){
+  if ($cartItems){
     $cartItems.innerHTML = '';
-    if (!cart.length) {
+    if (!cart.length){
       $cartItems.innerHTML = '<p style="color:#6a6f76;margin:8px 0 16px;">Your cart is empty.</p>';
-    } else {
+    }else{
       cart.forEach((item, idx) => {
         const div = document.createElement('div');
         div.className = 'cart-item';
         div.innerHTML = `
           <div class="cart-item-name">${item.name}</div>
           <div class="cart-qty">
-            <button data-act="dec" aria-label="Decrease">–</button>
+            <button data-act="dec" aria-label="Decrease" type="button">–</button>
             <span>${item.quantity}</span>
-            <button data-act="inc" aria-label="Increase">+</button>
-            <button data-act="remove" aria-label="Remove" title="Remove" style="margin-left:6px;border-color:#ffd3db">✕</button>
+            <button data-act="inc" aria-label="Increase" type="button">+</button>
+            <button data-act="remove" aria-label="Remove" title="Remove" type="button" style="margin-left:6px;border-color:#ffd3db">✕</button>
           </div>
         `;
-        const btnDec = div.querySelector('[data-act="dec"]');
-        const btnInc = div.querySelector('[data-act="inc"]');
-        const btnRemove = div.querySelector('[data-act="remove"]');
-        if (btnDec)    btnDec.addEventListener('click', () => { item.quantity = Math.max(1, (item.quantity || 1) - 1); updateCartUI(); });
-        if (btnInc)    btnInc.addEventListener('click', () => { item.quantity = (item.quantity || 0) + 1; updateCartUI(); });
-        if (btnRemove) btnRemove.addEventListener('click', () => { cart.splice(idx, 1); updateCartUI(); });
+        div.querySelector('[data-act="dec"]').addEventListener('click', ()=>{ item.quantity = Math.max(1, (item.quantity||1)-1); updateCartUI(); });
+        div.querySelector('[data-act="inc"]').addEventListener('click', ()=>{ item.quantity = (item.quantity||0)+1; updateCartUI(); });
+        div.querySelector('[data-act="remove"]').addEventListener('click', ()=>{ cart.splice(idx,1); updateCartUI(); });
         $cartItems.appendChild(div);
       });
     }
   }
-  const totalItems = cartItemsTotal();
-  if ($cartCount)     $cartCount.textContent     = String(totalItems);
-  if ($cartItemCount) $cartItemCount.textContent = String(totalItems);
+  const total = cartItemsTotal();
+  if ($cartCount)     $cartCount.textContent = String(total);
+  if ($cartItemCount) $cartItemCount.textContent = String(total);
   if (!noSave) saveCart();
 }
+function updateCartUI(){ renderCart(false); }
 
-function updateCartUI() { renderCart(false); }
-
-/* Cross-window listeners (ignore self + invalid payloads) */
-if (bc) {
+/* Cross-tab listeners (ignore self + bad payloads to prevent flicker) */
+if (bc){
   bc.onmessage = (ev) => {
     const d = ev && ev.data;
-    if (!d || d.type !== 'cart' || d.from === CLIENT_ID) return;       // ignore self
-    if (!Array.isArray(d.cart)) return;                                 // ignore bad payloads
+    if (!d || d.type !== 'cart' || d.from === CLIENT_ID) return;
+    if (!Array.isArray(d.cart)) return;
     cart = d.cart;
-    renderCart(true);                                                   // don't rebroadcast
+    renderCart(true);
   };
 }
-
 window.addEventListener('storage', (e) => {
   if (e.key !== CART_KEY) return;
-  try {
-    if (!e.newValue) return;                                            // ignore clears from other tabs
+  try{
+    if (!e.newValue) return;
     const parsed = JSON.parse(e.newValue);
-    if (!Array.isArray(parsed)) return;                                 // only accept arrays
+    if (!Array.isArray(parsed)) return;
     cart = parsed;
-    renderCart(true);                                                   // don't rebroadcast
-  } catch {}
+    renderCart(true);
+  }catch{}
 });
 
-/* Open/close cart */
-function openCart() {
+/* Drawer open/close */
+function openCart(){
   if ($cartDrawer)   $cartDrawer.classList.add('open');
   if ($cartBackdrop) $cartBackdrop.classList.add('open');
   document.body.style.overflow = 'hidden';
 }
-function closeCart() {
+function closeCart(){
   if ($cartDrawer)   $cartDrawer.classList.remove('open');
   if ($cartBackdrop) $cartBackdrop.classList.remove('open');
   document.body.style.overflow = '';
@@ -193,227 +149,231 @@ function closeCart() {
 if ($cartBtn)      $cartBtn.addEventListener('click', openCart);
 if ($cartClose)    $cartClose.addEventListener('click', closeCart);
 if ($cartBackdrop) $cartBackdrop.addEventListener('click', closeCart);
-if ($cartClear)    $cartClear.addEventListener('click', () => { cart = []; updateCartUI(); });
+if ($cartClear)    $cartClear.addEventListener('click', ()=>{ cart=[]; updateCartUI(); toast('Cart cleared'); announce('Cart cleared'); });
 
-/* ===== Product buttons ===== */
+/* =====================
+   PRODUCT BUTTONS (single source of truth)
+   ===================== */
 function initProductButtons(){
-  document.querySelectorAll('[data-add]').forEach(btn=>{
-    // Defensive: ensure it never submits a parent form
-    if (!btn.hasAttribute('type')) btn.setAttribute('type', 'button');
+  /* Defensive: ensure buttons never submit a form */
+  $$('[data-add], [data-buy-now]').forEach(btn=>{
+    if (!btn.hasAttribute('type')) btn.setAttribute('type','button');
+  });
+
+  /* Add to cart */
+  $$('[data-add]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const price = btn.getAttribute('data-price');
       const name  = btn.getAttribute('data-name') || 'Item';
       if (!price){ alert('Missing price id'); return; }
-      const existing = cart.find(i => i.price === price);
-      if (existing) existing.quantity += 1;
+      const exist = cart.find(i => i.price === price);
+      if (exist) exist.quantity += 1;
       else cart.push({ price, name, quantity: 1 });
       updateCartUI();
       openCart();
-      // toast/announce calls live elsewhere in app.js; they’re safe to keep.
-    });
-  });
-}
-initProductButtons();
-
-
-/* ===== Product buttons ===== */
-function initProductButtons(){
-  document.querySelectorAll('[data-add]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const price = btn.getAttribute('data-price');
-      const name = btn.getAttribute('data-name') || 'Item';
-      if (!price){ alert('Missing price id'); return; }
-      const existing = cart.find(i => i.price === price);
-      if (existing) existing.quantity += 1;
-      else cart.push({ price, name, quantity: 1 });
-      updateCartUI();
-      openCart();
-      toast(`Added “${name}” to cart`);
-      announce(`Added ${name} to cart`);
+      toast(`${name} added to cart`);
+      announce(`${name} added to cart`);
     });
   });
 
-  // Buy now -> still respects delivery date/time validation
-  document.querySelectorAll('[data-buy-now]').forEach(btn=>{
+  /* Buy Now (supports subscription or one-time) */
+  $$('[data-buy-now]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const price = btn.getAttribute('data-price');
-      const qty = parseInt(btn.getAttribute('data-qty')||'1',10);
-      const mode = (btn.getAttribute('data-mode') || 'payment').toLowerCase();
+      const qty   = parseInt(btn.getAttribute('data-qty')||'1', 10) || 1;
+      const mode  = (btn.getAttribute('data-mode')||'payment').toLowerCase(); // 'subscription' or 'payment'
+      const name  = btn.getAttribute('data-name') || 'Item';
       if (!price){ alert('Missing price id'); return; }
-      await guardedCheckout([{ price, quantity: Math.max(1, qty) }], mode);
-    });
-  });
-}
-initProductButtons();
 
-/* ===== Stripe Checkout ===== */
-let stripe = null;
-function tryInitStripe() {
-  const pk = (window && window.STRIPE_PUBLISHABLE_KEY) ? String(window.STRIPE_PUBLISHABLE_KEY) : '';
-  if (!pk || pk.startsWith('pk_REPLACE') || pk === 'undefined') { console.warn('Stripe publishable key not set.'); return; }
-  if (!window.Stripe) { setTimeout(tryInitStripe, 100); return; }
-  try { stripe = window.Stripe(pk); } catch { stripe = null; }
-}
-if (document.readyState === 'complete') { tryInitStripe(); } else { window.addEventListener('load', tryInitStripe); }
-tryInitStripe();
+      const deliveryDate = $date ? $date.value : '';
+      const timeWindow   = $time ? $time.value : '';
+      if (!deliveryDate){ toast('Choose a delivery date first.'); if ($date) $date.focus(); return; }
+      if (!timeWindow){ toast('Choose a time window first.'); if ($time) $time.focus(); return; }
 
-async function goToCheckout(items, mode='payment', deliveryDate, timeWindow){
-  if (!stripe){ alert('Checkout isn’t ready yet.'); return; }
-  try{
-    const res = await fetch('/api/create-checkout-session', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ items, mode, deliveryDate, timeWindow })
-    });
-
-    if (res.status === 409) {
-      // Slot full — show suggestions if provided
-      const data = await res.json();
-      const sug = (data?.suggestions || []).join(', ');
-      toast(data?.message || 'Selected window is full.');
-      if (sug) toast(`Try: ${sug}`);
-      openCart();
-      return;
-    }
-
-    if (!res.ok){
-      const text = await res.text();
-      console.error('Checkout error', res.status, text);
-      alert(`Checkout failed (${res.status}).`);
-      return;
-    }
-    const data = await res.json();
-    if (data.url) window.location.href = data.url; else alert(data.error || 'No checkout URL.');
-  }catch(e){ console.error('Network error:', e); alert('Network error starting checkout.'); }
-}
-
-/* ===== Delivery date/time helpers (ET cutoff logic included) ===== */
-function nowETParts(){
-  const parts = new Intl.DateTimeFormat('en-US',{
-    timeZone:'America/New_York', hourCycle:'h23', hour:'2-digit', minute:'2-digit'
-  }).formatToParts(new Date());
-  const map = Object.fromEntries(parts.map(p=>[p.type,p.value]));
-  return { h: parseInt(map.hour,10), m: parseInt(map.minute,10) };
-}
-function afterCutoff(){ const {h,m} = nowETParts(); return (h > 20) || (h === 20 && m >= 30); } // 20:30 ET
-
-function initDeliveryControls(){
-  if (!$date || !$time) return;
-
-  // Minimum date: tomorrow (or day after tomorrow if after cutoff)
-  const now = new Date();
-  const min = new Date(now);
-  if (afterCutoff()) min.setDate(min.getDate() + 2);
-  else min.setDate(min.getDate() + 1);
-
-  const yyyy = min.getFullYear();
-  const mm = String(min.getMonth()+1).padStart(2,'0');
-  const dd = String(min.getDate()).padStart(2,'0');
-  const minStr = `${yyyy}-${mm}-${dd}`;
-
-  $date.min = minStr;
-  if (!$date.value) $date.value = minStr;
-
-  // Ensure placeholder exists for time
-  if ($time && !$time.value) $time.value = '';
-}
-initDeliveryControls();
-
-/* ===== Wadsworth-only + capacity-aware guarded checkout ===== */
-function isAllowedZip(zip) { return String(zip || '').trim() === '44281'; }
-
-async function guardedCheckout(items, mode='payment') {
-  // Require date/time first
-  if (!$date || !$time) { openCart(); toast('Choose delivery date & time.'); return; }
-  const deliveryDate = String($date.value || '').trim();
-  const timeWindow = String($time.value || '').trim();
-  if (!deliveryDate || !timeWindow) { openCart(); toast('Choose delivery date & time.'); return; }
-
-  // Confirm ZIP
-  const zip = prompt("Enter your ZIP code to confirm delivery (Wadsworth only):", "44281");
-  if (!isAllowedZip(zip)) { alert("Sorry, we currently only deliver within Wadsworth (ZIP 44281)."); return; }
-
-  // Proceed to checkout (server will block if slot is full)
-  await goToCheckout(items, mode, deliveryDate, timeWindow);
-}
-
-/* ===== Cart checkout (one-time only from the drawer) ===== */
-if ($cartCheckout) {
-  $cartCheckout.addEventListener('click', async () => {
-    if (!cart || cart.length === 0) { alert('Your cart is empty.'); return; }
-    const subPrice = window.PRODUCT_PRICE_MAP && window.PRODUCT_PRICE_MAP.SUBSCRIPTION;
-    const hasSub = subPrice ? cart.some(i => i.price === subPrice) : false;
-    if (hasSub) { alert('Subscriptions must be purchased separately. Use “Subscribe Now”.'); return; }
-    const bad = cart.find(i => !i.price || !String(i.price).startsWith('price_'));
-    if (bad) { alert('One or more items are missing a valid Stripe Price ID.'); return; }
-    $cartCheckout.disabled = true;
-    try {
-      await guardedCheckout(cart.map(({ price, quantity }) => ({ price, quantity })), 'payment');
-    } finally {
-      $cartCheckout.disabled = false;
-    }
-  });
-}
-
-/* ===== Merch email capture (unchanged) ===== */
-(function merchSignup(){
-  const form = document.getElementById('merch-form'); if (!form) return;
-  const email = form.querySelector('input[type="email"]');
-  const msg = document.getElementById('merch-msg');
-  form.addEventListener('submit', async (e)=>{
-    e.preventDefault();
-    if (!email || !email.value) return;
-    form.querySelector('button').disabled = true;
-    msg.textContent = 'Saving…';
-    try{
-      const res = await fetch('/api/notify-merch', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: email.value }) });
-      if (res.ok){ msg.textContent = 'Thanks! We’ll email you when merch drops.'; toast('You’re on the merch list!'); announce('Added to merch notification list'); form.reset(); }
-      else { msg.textContent = 'Could not save right now. Please try again.'; }
-    }catch{ msg.textContent = 'Network error. Try again.'; }
-    finally{ form.querySelector('button').disabled = false; }
-  });
-})();
-
-/* ===== Vote form (dash-only options) ===== */
-(function voteFlavor(){
-  const form = document.getElementById('vote-form'); if (!form) return;
-  const msg = document.getElementById('vote-msg');
-
-  form.addEventListener('submit', async (e)=>{
-    e.preventDefault();
-    const choice = form.querySelector('input[name="flavor"]:checked');
-    const value = choice ? choice.value : '';
-    if (!value){ msg.textContent='Please select one option.'; return; }
-    form.querySelector('button').disabled = true; msg.textContent='Submitting vote…';
-    try{
-      const res = await fetch('/api/vote-flavor', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ flavor: value }) });
-      if (res.ok){ msg.textContent='Thanks for voting!'; toast('Vote recorded — thank you!'); announce('Your vote was recorded'); localStorage.setItem('voted_flavor','1'); }
-      else { msg.textContent='Could not save your vote. Please try again.'; }
-    }catch{ msg.textContent='Network error. Try again.'; }
-    finally{ form.querySelector('button').disabled = false; }
-  });
-})();
-
-/* ===== Cutoff warning pill in service bar (ET 20:30) ===== */
-(function cutoffWarning(){
-  function render(){
-    const bar = document.querySelector('.service-bar'); if (!bar) return;
-    let warn = bar.querySelector('.cutoff-msg');
-    if (afterCutoff()){
-      if (!warn){
-        warn = document.createElement('span');
-        warn.className = 'cutoff-msg';
-        warn.textContent = 'Orders after 8:30 PM are delivered the day after tomorrow.';
-        bar.appendChild(warn);
+      try{
+        disableCheckout(true);
+        const res = await fetch('/api/create-checkout-session', {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json' },
+          body: JSON.stringify({
+            mode,
+            items: [{ price, quantity: qty, name }],
+            deliveryDate,
+            timeWindow
+          })
+        });
+        if (!res.ok){
+          const data = await res.json().catch(()=>({}));
+          if (res.status === 409 && data?.error === 'SLOT_FULL'){
+            const s = (data.suggestions||[]).join(' • ') || 'another time';
+            alert(`That window is full. Try: ${s}`);
+            return;
+          }
+          console.error('Checkout failed', res.status, data);
+          alert(`Checkout failed (${res.status}). ${data?.error || ''}`);
+          return;
+        }
+        const { url } = await res.json();
+        if (url) window.location.href = url;
+      }catch(err){
+        console.error(err);
+        alert('Checkout failed (network).');
+      }finally{
+        disableCheckout(false);
       }
-    } else if (warn){
-      warn.remove();
+    });
+  });
+}
+
+/* =====================
+   CHECKOUT (cart drawer)
+   ===================== */
+function disableCheckout(disabled){
+  if ($cartCheckout){
+    $cartCheckout.disabled = !!disabled;
+    $cartCheckout.textContent = disabled ? 'Processing…' : 'Checkout';
+  }
+}
+async function handleCartCheckout(){
+  if (!cart.length){ toast('Your cart is empty.'); return; }
+  const deliveryDate = $date ? $date.value : '';
+  const timeWindow   = $time ? $time.value : '';
+  if (!deliveryDate){ toast('Choose a delivery date first.'); if ($date) $date.focus(); return; }
+  if (!timeWindow){ toast('Choose a time window first.'); if ($time) $time.focus(); return; }
+
+  try{
+    disableCheckout(true);
+    const res = await fetch('/api/create-checkout-session', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify({
+        mode: 'payment',
+        items: cart.map(i => ({ price: i.price, quantity: i.quantity, name: i.name })),
+        deliveryDate,
+        timeWindow
+      })
+    });
+    if (!res.ok){
+      const data = await res.json().catch(()=>({}));
+      if (res.status === 409 && data?.error === 'SLOT_FULL'){
+        const s = (data.suggestions||[]).join(' • ') || 'another time';
+        alert(`That window is full. Try: ${s}`);
+        return;
+      }
+      console.error('Checkout failed', res.status, data);
+      alert(`Checkout failed (${res.status}). ${data?.error || ''}`);
+      return;
+    }
+    const { url } = await res.json();
+    if (url) window.location.href = url;
+  }catch(err){
+    console.error(err);
+    alert('Checkout failed (network).');
+  }finally{
+    disableCheckout(false);
+  }
+}
+if ($cartCheckout) $cartCheckout.addEventListener('click', handleCartCheckout);
+
+/* =====================
+   DATE / TIME helpers
+   ===================== */
+(function initDateTime(){
+  if ($date){
+    // Default to today
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth()+1).padStart(2,'0');
+    const dd = String(today.getDate()).padStart(2,'0');
+    $date.min = `${yyyy}-${mm}-${dd}`;
+    if (!$date.value) $date.value = `${yyyy}-${mm}-${dd}`;
+  }
+  if ($time){
+    if (!$time.children.length){
+      getWindows().forEach(w=>{
+        const opt = document.createElement('option');
+        opt.value = w; opt.textContent = w;
+        $time.appendChild(opt);
+      });
     }
   }
-  render();
-  setInterval(render, 5*60*1000);
 })();
 
-/* ===== Init ===== */
-loadCart();
-renderCart();
+/* =====================
+   Flavor vote + Merch notify forms (optional)
+   ===================== */
+const $voteForm = document.getElementById('vote-form');
+const $voteMsg  = document.getElementById('vote-msg');
+if ($voteForm){
+  $voteForm.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const form = new FormData($voteForm);
+    const flavor = (form.get('flavor')||'').toString().trim();
+    if (!flavor){ toast('Pick a flavor first.'); return; }
+    try{
+      const r = await fetch('/api/vote-flavor', {
+        method: 'POST', headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ flavor })
+      });
+      if (r.ok){
+        if ($voteMsg){ $voteMsg.textContent = 'Thanks for voting!'; }
+        toast('Vote recorded. Thanks!');
+        $voteForm.reset();
+      }else{
+        toast('Could not record vote. Try again later.');
+      }
+    }catch{ toast('Network error.'); }
+  });
+}
+
+const $merchForm = document.getElementById('merch-form');
+const $merchMsg  = document.getElementById('merch-msg');
+if ($merchForm){
+  $merchForm.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const form = new FormData($merchForm);
+    const email = (form.get('email')||'').toString().trim();
+    if (!email){ toast('Enter your email.'); return; }
+    try{
+      const r = await fetch('/api/notify-merch', {
+        method: 'POST', headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ email })
+      });
+      if (r.ok){
+        if ($merchMsg){ $merchMsg.textContent = 'We’ll email you when merch drops!'; }
+        toast('Added to waitlist ✅');
+        $merchForm.reset();
+      }else{
+        toast('Could not add you right now. Try again later.');
+      }
+    }catch{ toast('Network error.'); }
+  });
+}
+
+/* =====================
+   Fun: Muffin Tapper (thank-you + home)
+   ===================== */
+(function initMuffinTapper(){
+  const btn = document.getElementById('muffin-tapper');
+  if (!btn) return;
+  const countEl = btn.querySelector('.mt-count');
+  let count = parseInt(localStorage.getItem('mt_count')||'0',10) || 0;
+  if (countEl) countEl.textContent = String(count);
+
+  btn.addEventListener('click', ()=>{
+    count += 1;
+    localStorage.setItem('mt_count', String(count));
+    if (countEl) countEl.textContent = String(count);
+    btn.classList.add('pop');
+    setTimeout(()=> btn.classList.remove('pop'), 180);
+  });
+})();
+
+/* =====================
+   Init
+   ===================== */
+(function init(){
+  loadCart();
+  renderCart(true);
+  initProductButtons();
+})();
