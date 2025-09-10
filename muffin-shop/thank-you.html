@@ -3,25 +3,118 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Thanks — Sean’s Muffins</title>
+  <title>Thanks! — Sean’s Muffins</title>
   <link rel="stylesheet" href="css/styles.css">
   <style>
-    main { max-width: 720px; margin: 64px auto; background:#fff; border:1px solid #eee; border-radius:16px; padding:24px; text-align:center; }
+    .ty-wrap{max-width:860px;margin:40px auto;padding:0 16px}
+    .ty-card{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:18px}
+    .ty-h{display:flex;align-items:center;gap:10px;margin:0 0 12px}
+    .ty-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .ty-items{margin:0;padding-left:18px}
+    .muted{color:#6a6f76}
+    @media (max-width:720px){.ty-grid{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
-  <main>
-    <h1>Thank you! 🧁</h1>
-    <p>Your order is confirmed. We’ll text you an ETA as soon as it’s scheduled.</p>
-    <a class="btn btn-primary" href="index.html">Back to Home</a>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="index.html"><img class="brand-logo" src="images/logo.png" alt="" /> <span>Sean’s Muffins</span></a>
+    </div>
+  </header>
+
+  <main class="section">
+    <div class="ty-wrap">
+      <h1 class="ty-h">🎉 Thank you for your order!</h1>
+      <p class="muted" id="ty-msg">We’re confirming your order details…</p>
+
+      <div class="ty-card" id="ty-card" hidden>
+        <div class="ty-grid">
+          <section>
+            <h3>Order summary</h3>
+            <ul class="ty-items" id="ty-items"></ul>
+            <p><strong>Total:</strong> <span id="ty-total"></span></p>
+          </section>
+          <section>
+            <h3>Delivery</h3>
+            <p><strong>Date:</strong> <span id="ty-date"></span></p>
+            <p><strong>Window:</strong> <span id="ty-window"></span></p>
+            <p><strong>Notes:</strong> <span id="ty-notes" class="muted">(none)</span></p>
+          </section>
+        </div>
+        <hr style="margin:16px 0;border:0;border-top:1px solid #eee" />
+        <section class="ty-grid">
+          <div>
+            <h3>Customer</h3>
+            <p id="ty-name"></p>
+            <p id="ty-email" class="muted"></p>
+            <p id="ty-phone" class="muted"></p>
+          </div>
+          <div>
+            <h3>Address</h3>
+            <p id="ty-address"></p>
+          </div>
+        </section>
+      </div>
+
+      <p style="margin-top:18px"><a class="btn btn-primary" href="muffins.html">Back to muffins</a></p>
+    </div>
   </main>
 
-  <!-- Muffin tapper widget -->
-  <button id="muffin-tapper" aria-label="Just for fun: muffin tapper" title="Tap me!">
-    <span class="mt-emoji" aria-hidden="true">🧁</span>
-    <span class="mt-count" aria-live="polite">0</span>
-  </button>
+  <footer class="site-footer">
+    <div class="container footer-inner">© <span id="y"></span> Sean’s Muffins</div>
+  </footer>
 
-  <script src="js/app.js"></script>
+  <script>
+    document.getElementById('y').textContent = new Date().getFullYear();
+
+    function q(k){ return new URLSearchParams(location.search).get(k); }
+    function money(n,c='usd'){
+      try{
+        return new Intl.NumberFormat('en-US',{style:'currency',currency:c.toUpperCase()}).format(n);
+      }catch{ return `$${(n||0).toFixed(2)}`; }
+    }
+
+    (async function init(){
+      const sid = q('session_id');
+      if (!sid){ document.getElementById('ty-msg').textContent = 'Missing session_id.'; return; }
+
+      try{
+        const r = await fetch(`/api/session-summary?session_id=${encodeURIComponent(sid)}`);
+        const data = await r.json();
+        if (!r.ok) throw new Error(data?.message || data?.error || 'Could not load order.');
+
+        // Items
+        const ul = document.getElementById('ty-items');
+        ul.innerHTML = '';
+        (data.items||[]).forEach(i=>{
+          const li = document.createElement('li');
+          li.textContent = `${i.name} x${i.quantity}`;
+          ul.appendChild(li);
+        });
+
+        // Totals
+        document.getElementById('ty-total').textContent = money(data.amount_total, data.currency);
+
+        // Delivery
+        document.getElementById('ty-date').textContent = data.delivery_date || '—';
+        document.getElementById('ty-window').textContent = data.preferred_window || '—';
+        document.getElementById('ty-notes').textContent = data.notes || '(none)';
+
+        // Customer
+        document.getElementById('ty-name').textContent = data.customer?.name || '';
+        document.getElementById('ty-email').textContent = data.customer?.email || '';
+        document.getElementById('ty-phone').textContent = data.customer?.phone || '';
+
+        // Address
+        document.getElementById('ty-address').textContent = data.address || '';
+
+        document.getElementById('ty-card').hidden = false;
+        document.getElementById('ty-msg').textContent = 'Your order is confirmed!';
+      }catch(err){
+        document.getElementById('ty-msg').textContent = 'We could not load the order summary.';
+        console.error(err);
+      }
+    })();
+  </script>
 </body>
 </html>
