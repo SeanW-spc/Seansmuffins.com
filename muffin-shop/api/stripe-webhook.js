@@ -1,6 +1,6 @@
 // api/stripe-webhook.js
-// Confirms/cancels Airtable reservations AND inserts an Orders row after payment.
-// Logs meaningful errors if Airtable rejects a write.
+// Inserts into Orders with progressive fallbacks so it succeeds even if fields differ.
+// Also confirms/expires Slot reservations.
 
 import Stripe from 'stripe';
 
@@ -15,9 +15,7 @@ function buffer(readable) {
   });
 }
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? '', {
-  apiVersion: '2024-06-20',
-});
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? '', { apiVersion: '2024-06-20' });
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -45,33 +43,32 @@ export default async function handler(req, res) {
     if (event.type === 'checkout.session.completed') {
       const sessId = event.data.object.id;
       const session = await stripe.checkout.sessions.retrieve(sessId, { expand: ['line_items'] });
-      await createAirtableOrder(session);                         // write to Orders
-      await markReservation(session?.metadata?.reservationId, 'confirmed', session?.id); // confirm Slot
+      await upsertOrderWithFallbacks(session);
+      await markReservation(session?.metadata?.reservationId, 'confirmed', session?.id);
     } else if (event.type === 'checkout.session.expired') {
       const session = event.data.object;
       await markReservation(session?.metadata?.reservationId, 'expired', session?.id);
     }
   } catch (e) {
     console.error('Webhook handler error', e);
-    // Return 200 so Stripe doesn’t retry forever; you’ll still see the error in Vercel logs.
   }
 
   res.status(200).json({ received: true });
 }
 
-/* ===== Slots helpers ===== */
+/* ===========================
+   Airtable: Slots
+   =========================== */
 function hasSlotsEnv() {
   return Boolean(process.env.AIRTABLE_API_KEY && process.env.AIRTABLE_BASE_ID && process.env.AIRTABLE_TABLE_SLOTS);
 }
-
 async function markReservation(reservationId, status, sessionId) {
   if (!reservationId || !hasSlotsEnv()) return;
-
   const table = encodeURIComponent(process.env.AIRTABLE_TABLE_SLOTS);
   const base = process.env.AIRTABLE_BASE_ID;
   const url = `https://api.airtable.com/v0/${base}/${table}`;
 
-  // Find record by ReservationId
+  // Find by ReservationId
   const findUrl = new URL(url);
   findUrl.searchParams.set('filterByFormula', `({ReservationId}='${reservationId}')`);
   const r = await fetch(findUrl.toString(), { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } });
@@ -100,11 +97,12 @@ async function markReservation(reservationId, status, sessionId) {
   if (!upd.ok) console.error('Airtable Slots update failed', upd.status, await upd.text().catch(()=>'')); 
 }
 
-/* ===== Orders insert ===== */
+/* ===========================
+   Airtable: Orders (progressive fallbacks)
+   =========================== */
 function hasOrdersEnv() {
   return Boolean(process.env.AIRTABLE_API_KEY && process.env.AIRTABLE_BASE_ID && (process.env.AIRTABLE_TABLE_NAME || 'Orders'));
 }
-
 function toE164Maybe(phone) {
   if (!phone) return '';
   const d = String(phone).replace(/[^\d+]/g, '');
@@ -124,7 +122,7 @@ function getCustomFieldText(session, key) {
   } catch { return ''; }
 }
 
-async function createAirtableOrder(session) {
+async function upsertOrderWithFallbacks(session) {
   if (!hasOrdersEnv()) return;
 
   const base = process.env.AIRTABLE_BASE_ID;
@@ -144,34 +142,62 @@ async function createAirtableOrder(session) {
   const notesCF   = (getCustomFieldText(session, 'order_notes') || '').trim();
   const notes = [notesMeta, notesCF].filter(Boolean).join(' | ').slice(0, 1000);
 
-  // Fields your table should have (see step 0)
-  const fields = {
-    stripe_session_id: session.id,
-    delivery_date: session.metadata?.deliveryDate || '',
-    preferred_window: session.metadata?.timeWindow || '',
-    status: 'unassigned',
-    delivery_time: '',
-    route_position: null,
+  const attempts = [
+    // A) Full feature set
+    {
+      fields: {
+        stripe_session_id: session.id,
+        delivery_date: session.metadata?.deliveryDate || '',
+        preferred_window: session.metadata?.timeWindow || '',
+        status: 'unassigned',
+        delivery_time: '',
+        route_position: null,
+        customer_name: cd.name || shipping.name || '',
+        email: cd.email || '',
+        phone: toE164Maybe(cd.phone || ''),
+        address: compactAddress(shipping),
+        items: itemsStr,
+        total: (session.amount_total ?? 0) / 100,
+        created: new Date().toISOString(),
+        ...(notes ? { notes } : {}),
+      }
+    },
+    // B) Without optional fields most likely to 422
+    {
+      fields: {
+        stripe_session_id: session.id,
+        delivery_date: session.metadata?.deliveryDate || '',
+        preferred_window: session.metadata?.timeWindow || '',
+        customer_name: cd.name || shipping.name || '',
+        email: cd.email || '',
+        phone: toE164Maybe(cd.phone || ''),
+        address: compactAddress(shipping),
+        total: (session.amount_total ?? 0) / 100,
+        created: new Date().toISOString(),
+        ...(notes ? { notes } : {}),
+      }
+    },
+    // C) Minimal
+    {
+      fields: {
+        stripe_session_id: session.id,
+        customer_name: cd.name || shipping.name || '',
+        email: cd.email || '',
+        created: new Date().toISOString(),
+        ...(notes ? { notes } : {}),
+      }
+    }
+  ];
 
-    customer_name: cd.name || shipping.name || '',
-    email: cd.email || '',
-    phone: toE164Maybe(cd.phone || ''),
-    address: compactAddress(shipping),
-
-    // items is optional; we only set it if your table has it
-    // items: itemsStr,
-
-    total: (session.amount_total ?? 0) / 100,
-    created: new Date().toISOString(),
-  };
-  if (notes) fields.notes = notes;
-
-  // Try full write
-  let r = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ records: [{ fields }] }) });
-  if (!r.ok) {
+  for (let i = 0; i < attempts.length; i++) {
+    const body = { records: [{ fields: attempts[i].fields }] };
+    const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+    if (r.ok) {
+      console.log('Airtable Orders insert OK (attempt', i+1, ') for session', session.id);
+      return;
+    }
     const txt = await r.text().catch(()=> '');
-    console.error('Airtable Orders insert failed', r.status, txt);
-  } else {
-    console.log('Airtable Orders insert OK for session', session.id);
+    console.error(`Airtable Orders insert failed (attempt ${i+1})`, r.status, txt);
+    if (r.status !== 422 && r.status !== 400) break;
   }
 }
