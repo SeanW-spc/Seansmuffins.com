@@ -1,6 +1,7 @@
 // api/stripe-webhook.js
-// Confirms/cancels Airtable reservations AND creates an Orders row after successful payment.
-// Requires STRIPE_WEBHOOK_SECRET when using this route.
+// Confirms/cancels Airtable reservations AND creates an Orders row after payment.
+// Also captures "order_notes" from either site metadata or Stripe custom field.
+// If Airtable rejects an unknown field (e.g., notes), we retry without it.
 
 import Stripe from 'stripe';
 
@@ -41,7 +42,7 @@ export default async function handler(req, res) {
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object;
 
-      // Retrieve full session with line items
+      // Retrieve full session with line items (custom_fields are already on session)
       const full = await stripe.checkout.sessions.retrieve(session.id, { expand: ['line_items'] });
 
       // 1) Create the Airtable Order (unassigned)
@@ -137,6 +138,13 @@ function compactAddress(obj) {
   return parts.join(', ');
 }
 
+function getCustomFieldText(session, key) {
+  try {
+    const f = (session.custom_fields || []).find(cf => cf.key === key);
+    return f && f.type === 'text' && f.text && typeof f.text.value === 'string' ? f.text.value : '';
+  } catch { return ''; }
+}
+
 async function createAirtableOrder(session) {
   if (!hasAirtableOrdersConfig()) return;
 
@@ -156,6 +164,11 @@ async function createAirtableOrder(session) {
     return `${name} x${qty}`;
   }).join(', ');
 
+  // Combine site-provided notes (metadata.order_notes) + Stripe custom field (order_notes)
+  const notesMeta = (session.metadata?.order_notes || '').trim();
+  const notesCF   = (getCustomFieldText(session, 'order_notes') || '').trim();
+  const combinedNotes = [notesMeta, notesCF].filter(Boolean).join(' | ').slice(0, 1000);
+
   const fields = {
     delivery_date: session.metadata?.deliveryDate || '',
     preferred_window: session.metadata?.timeWindow || '',
@@ -174,10 +187,21 @@ async function createAirtableOrder(session) {
     created: new Date().toISOString(),
   };
 
-  const body = { records: [{ fields }] };
-  const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
-  if (!r.ok) {
-    const t = await r.text();
-    console.error('Airtable order create failed', r.status, t);
+  if (combinedNotes) fields.notes = combinedNotes; // only include if present
+
+  // Try creating with notes; if Airtable rejects unknown field, retry without notes
+  let body = { records: [{ fields }] };
+  let r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+
+  if (!r.ok && r.status === 422 && fields.notes) {
+    // Remove notes and try again
+    delete fields.notes;
+    body = { records: [{ fields }] };
+    const r2 = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+    if (!r2.ok) {
+      console.error('Airtable order create failed (retry)', r2.status, await r2.text());
+    }
+  } else if (!r.ok) {
+    console.error('Airtable order create failed', r.status, await r.text());
   }
 }

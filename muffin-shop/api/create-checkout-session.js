@@ -1,8 +1,11 @@
 // api/create-checkout-session.js
-// Robust Stripe Checkout session creator with:
-// - Price preflight (prevents subscription/one-time mismatches)
-// - Soft-fail Airtable capacity (never blocks checkout on Airtable hiccups)
-// - Helpful error messages back to the client
+// Creates a Stripe Checkout Session with:
+// - price preflight (prevents sub/one-time mismatches)
+// - optional Airtable capacity hold (soft-fails if Airtable hiccups)
+// - phone + US shipping address collection
+// - custom field for notes in Stripe
+// - passes site "notes" through metadata to the webhook
+// - clear error messages back to the client
 
 import Stripe from 'stripe';
 
@@ -10,9 +13,6 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? '', {
   apiVersion: '2024-06-20',
 });
 
-/* ===========================
-   Entry
-   =========================== */
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -27,9 +27,9 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { items, mode = 'payment', deliveryDate, timeWindow } = req.body || {};
+    const { items, mode = 'payment', deliveryDate, timeWindow, notes: rawNotes } = req.body || {};
 
-    // ===== Validate basic input
+    // --- Basic validation
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'BAD_REQUEST', message: 'No items provided.' });
     }
@@ -39,8 +39,9 @@ export default async function handler(req, res) {
     if (!timeWindow || typeof timeWindow !== 'string') {
       return res.status(400).json({ error: 'BAD_REQUEST', message: 'timeWindow required.' });
     }
+    const notes = (rawNotes ? String(rawNotes) : '').slice(0, 500); // keep it reasonable
 
-    // ===== Stripe price preflight (prevents 500s for price mistakes)
+    // --- Stripe price preflight (catch bad IDs + mode mismatches early)
     const uniquePriceIds = [...new Set(items.map(i => String(i.price || '')))].filter(Boolean);
     const prices = await Promise.all(uniquePriceIds.map(id => stripe.prices.retrieve(id)));
     const mapRecurring = new Map(prices.map(p => [p.id, Boolean(p.recurring)]));
@@ -52,7 +53,7 @@ export default async function handler(req, res) {
     if (!isSubscription && anyRecurring) {
       return res.status(400).json({
         error: 'RECURRING_IN_PAYMENT_MODE',
-        message: 'Your cart contains a subscription price but checkout mode is payment. Use a Subscribe button, or remove subscription items from the cart.',
+        message: 'Cart contains a subscription price but checkout mode is payment. Use Subscribe, or remove subscription items.',
       });
     }
     if (isSubscription && anyOneTime) {
@@ -62,7 +63,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // ===== Optional capacity check & hold (never block on Airtable failure)
+    // --- Optional capacity check + pending hold in Airtable (soft-fail on errors)
     let reservationId = null;
     try {
       if (hasAirtableConfig()) {
@@ -83,11 +84,10 @@ export default async function handler(req, res) {
       }
     } catch (airErr) {
       console.error('Airtable capacity check failed – proceeding without capacity gate:', airErr);
-      // Soft-fail: we do not block checkout if Airtable hiccups
-      reservationId = null;
+      reservationId = null; // continue without blocking checkout
     }
 
-    // ===== Create Checkout Session
+    // --- Create Checkout Session
     const session = await stripe.checkout.sessions.create({
       mode: isSubscription ? 'subscription' : 'payment',
       allow_promotion_codes: true,
@@ -97,30 +97,36 @@ export default async function handler(req, res) {
       })),
       success_url: `${process.env.NEXT_PUBLIC_SITE_URL || 'https://seansmuffins.com'}/thank-you.html?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.NEXT_PUBLIC_SITE_URL || 'https://seansmuffins.com'}/`,
-      // collect phone + address for delivery
       phone_number_collection: { enabled: true },
       shipping_address_collection: { allowed_countries: ['US'] },
-      // travel requested delivery info
+
+      // Let customers add notes directly on Stripe too
+      custom_fields: [
+        {
+          key: 'order_notes',
+          label: { type: 'custom', custom: 'Delivery / allergy notes (optional)' },
+          type: 'text',
+          optional: true,
+        },
+      ],
+
+      // Your site-provided notes and delivery choices travel via metadata
       metadata: {
         deliveryDate,
         timeWindow,
         reservationId: reservationId || '',
+        order_notes: notes || '',
       },
-      // visible to you in the Stripe dashboard UI
-      custom_fields: [
-        { key: 'delivery_date', label: { type: 'custom', custom: 'Delivery date' }, type: 'text', default: deliveryDate },
-        { key: 'preferred_time', label: { type: 'custom', custom: 'Preferred time window' }, type: 'text', default: timeWindow },
-      ],
     });
 
     return res.status(200).json({ url: session.url });
   } catch (err) {
-    // Map common Stripe errors to helpful responses
     const msg = String(err?.message || 'Server error');
     const code = String(err?.code || 'UNKNOWN');
-    const status = (code === 'resource_missing' || /No such/.test(msg)) ? 400
-                  : (code === 'validation_error') ? 400
-                  : 500;
+    const status =
+      (code === 'resource_missing' || /No such/i.test(msg)) ? 400 :
+      (code === 'validation_error') ? 400 :
+      500;
 
     console.error('create-checkout-session error', { code, msg });
     return res.status(status).json({
@@ -178,7 +184,7 @@ async function airtableCount(url, filterByFormula) {
       headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` },
     });
     if (!r.ok) {
-      const t = await r.text().catch(()=> '');
+      const t = await r.text().catch(() => '');
       throw new Error(`Airtable count error ${r.status}: ${t}`);
     }
     const data = await r.json();
@@ -188,9 +194,7 @@ async function airtableCount(url, filterByFormula) {
   return total;
 }
 
-function getWindows() {
-  return ['6:00–7:00 AM', '7:00–8:00 AM', '8:00–9:00 AM'];
-}
+function getWindows() { return ['6:00–7:00 AM', '7:00–8:00 AM', '8:00–9:00 AM']; }
 
 async function createPendingReservation({ deliveryDate, timeWindow, itemsCount }) {
   const id = (globalThis.crypto?.randomUUID?.() || randomId());
@@ -221,10 +225,9 @@ async function createPendingReservation({ deliveryDate, timeWindow, itemsCount }
   });
 
   if (!r.ok) {
-    const t = await r.text().catch(()=> '');
+    const t = await r.text().catch(() => '');
     console.error('Airtable reserve failed', r.status, t);
-    // Soft-fail: allow checkout to continue without a reservation
-    return id;
+    return id; // soft-fail: still allow checkout
   }
   return id;
 }

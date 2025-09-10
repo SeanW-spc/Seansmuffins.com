@@ -1,16 +1,14 @@
 /* =========================
-   Sean’s Muffins – app.js (FULL FILE)
-   Paste this entire file over your existing js/app.js
+   Sean’s Muffins – app.js (FULL FILE, with Notes)
    ========================= */
 
-/* ===== Small helpers ===== */
 const $ = (sel, root=document) => root.querySelector(sel);
 const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
 
-/* ===== Footer year ===== */
+/* Footer year */
 const y = document.getElementById('y'); if (y) y.textContent = new Date().getFullYear();
 
-/* ===== Smooth scroll for on-page anchors ===== */
+/* Smooth scroll */
 $$('a[href^="#"]').forEach(a => {
   a.addEventListener('click', e => {
     const target = document.querySelector(a.getAttribute('href'));
@@ -20,30 +18,13 @@ $$('a[href^="#"]').forEach(a => {
   });
 });
 
-/* ===== A11y live announcements + toasts ===== */
+/* A11y + toasts */
 const $live = document.getElementById('a11y-live');
 const $toasts = document.getElementById('toast');
+function announce(msg){ try{ if ($live){ $live.textContent=''; setTimeout(()=>{ $live.textContent=msg; },10);} }catch{} }
+function toast(msg){ if(!$toasts){ alert(msg); return; } const el=document.createElement('div'); el.className='toast'; el.textContent=msg; $toasts.appendChild(el); setTimeout(()=>el.remove(),2600); }
 
-function announce(msg){
-  try{
-    if ($live){
-      $live.textContent = '';
-      setTimeout(()=>{ $live.textContent = msg; }, 10);
-    }
-  }catch{}
-}
-function toast(msg){
-  if (!$toasts) { alert(msg); return; }
-  const el = document.createElement('div');
-  el.className = 'toast';
-  el.textContent = msg;
-  $toasts.appendChild(el);
-  setTimeout(()=>{ el.remove(); }, 2600);
-}
-
-/* =====================
-   CART (with cross-tab sync + flicker fix)
-   ===================== */
+/* Cart */
 const CLIENT_ID = Math.random().toString(36).slice(2);
 const CART_KEY  = 'sm_cart_v1';
 
@@ -57,29 +38,16 @@ const $cartItemCount = document.getElementById('cart-item-count');
 const $cartClear     = document.getElementById('cart-clear');
 const $cartCheckout  = document.getElementById('cart-checkout');
 
-const $date = document.getElementById('delivery-date');
-const $time = document.getElementById('delivery-time');
+const $date   = document.getElementById('delivery-date');
+const $time   = document.getElementById('delivery-time');
+const $notes  = document.getElementById('order-notes');
 
 const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('sm_cart') : null;
 let cart = [];
 
-/* Windows should match backend's list for suggestions */
 function getWindows(){ return ['6:00–7:00 AM', '7:00–8:00 AM', '8:00–9:00 AM']; }
-
-function loadCart(){
-  try{
-    const raw = localStorage.getItem(CART_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    cart = Array.isArray(parsed) ? parsed : [];
-  }catch{ cart = []; }
-}
-function saveCart(){
-  try{
-    localStorage.setItem(CART_KEY, JSON.stringify(cart));
-    if (bc) bc.postMessage({ type:'cart', from: CLIENT_ID, cart: cart.map(i=>({...i})) });
-  }catch{}
-}
-
+function loadCart(){ try{ const raw=localStorage.getItem(CART_KEY); const parsed=raw?JSON.parse(raw):[]; cart = Array.isArray(parsed)?parsed:[]; }catch{ cart=[]; } }
+function saveCart(){ try{ localStorage.setItem(CART_KEY, JSON.stringify(cart)); if (bc) bc.postMessage({ type:'cart', from:CLIENT_ID, cart:cart.map(i=>({...i})) }); }catch{} }
 function cartItemsTotal(){ return cart.reduce((n,i)=> n + (parseInt(i.quantity||0,10) || 0), 0); }
 
 function renderCart(noSave=false){
@@ -114,7 +82,7 @@ function renderCart(noSave=false){
 }
 function updateCartUI(){ renderCart(false); }
 
-/* Cross-tab listeners (ignore self + bad payloads to prevent flicker) */
+/* Cross-tab */
 if (bc){
   bc.onmessage = (ev) => {
     const d = ev && ev.data;
@@ -136,60 +104,47 @@ window.addEventListener('storage', (e) => {
 });
 
 /* Drawer open/close */
-function openCart(){
-  if ($cartDrawer)   $cartDrawer.classList.add('open');
-  if ($cartBackdrop) $cartBackdrop.classList.add('open');
-  document.body.style.overflow = 'hidden';
-}
-function closeCart(){
-  if ($cartDrawer)   $cartDrawer.classList.remove('open');
-  if ($cartBackdrop) $cartBackdrop.classList.remove('open');
-  document.body.style.overflow = '';
-}
+function openCart(){ if ($cartDrawer) $cartDrawer.classList.add('open'); if ($cartBackdrop) $cartBackdrop.classList.add('open'); document.body.style.overflow='hidden'; }
+function closeCart(){ if ($cartDrawer) $cartDrawer.classList.remove('open'); if ($cartBackdrop) $cartBackdrop.classList.remove('open'); document.body.style.overflow=''; }
 if ($cartBtn)      $cartBtn.addEventListener('click', openCart);
 if ($cartClose)    $cartClose.addEventListener('click', closeCart);
 if ($cartBackdrop) $cartBackdrop.addEventListener('click', closeCart);
 if ($cartClear)    $cartClear.addEventListener('click', ()=>{ cart=[]; updateCartUI(); toast('Cart cleared'); announce('Cart cleared'); });
 
-/* =====================
-   DELIVERY POPUP for Buy Now
-   ===================== */
+/* ===== Delivery popup for Buy Now (includes notes) ===== */
 let deliveryModalEl = null;
 function buildDeliveryModal(){
   const el = document.createElement('div');
   el.id = 'delivery-modal';
   el.setAttribute('role','dialog');
   el.setAttribute('aria-modal','true');
-  el.style.cssText = `
-    position:fixed; inset:0; z-index:10000;
-    display:flex; align-items:center; justify-content:center;
-    background:rgba(0,0,0,0.48);
-    padding:16px;
-  `;
+  el.style.cssText = `position:fixed; inset:0; z-index:10000; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.48); padding:16px;`;
   el.innerHTML = `
-    <div style="max-width:480px; width:100%; background:#fff; border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,.2); overflow:hidden; font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;">
-      <div style="padding:16px 20px; border-bottom:1px solid #eee; display:flex; align-items:center; justify-content:space-between;">
-        <h3 style="margin:0; font-size:18px;">Delivery Details</h3>
-        <button type="button" data-close style="border:none; background:#fff; font-size:20px; line-height:1; cursor:pointer;">✕</button>
+    <div style="max-width:520px;width:100%;background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.2);overflow:hidden;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
+      <div style="padding:16px 20px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between;">
+        <h3 style="margin:0;font-size:18px;">Delivery Details</h3>
+        <button type="button" data-close style="border:none;background:#fff;font-size:20px;line-height:1;cursor:pointer;">✕</button>
       </div>
       <div style="padding:18px 20px;">
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
           <div>
-            <label for="bn-date" style="display:block; font-size:12px; color:#555; margin-bottom:6px;">Date</label>
-            <input type="date" id="bn-date" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:10px;">
+            <label for="bn-date" style="display:block;font-size:12px;color:#555;margin-bottom:6px;">Date</label>
+            <input type="date" id="bn-date" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:10px;">
           </div>
           <div>
-            <label for="bn-time" style="display:block; font-size:12px; color:#555; margin-bottom:6px;">Preferred time</label>
-            <select id="bn-time" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:10px;">
+            <label for="bn-time" style="display:block;font-size:12px;color:#555;margin-bottom:6px;">Preferred time</label>
+            <select id="bn-time" style="width:100%;padding:10px;border:1px solid #ddd;border-radius:10px;">
               <option value="">Select a window…</option>
             </select>
           </div>
         </div>
-        <p style="margin:12px 0 0; font-size:12px; color:#6a6f76;">We currently deliver in Wadsworth (44281). Checkout is handled securely by Stripe.</p>
+        <label for="bn-notes" style="display:block;font-size:12px;color:#555;margin:12px 0 6px;">Delivery / allergy notes (optional)</label>
+        <textarea id="bn-notes" rows="3" placeholder="Gate code, leave on porch, nut allergy, etc." style="width:100%;padding:10px;border:1px solid #ddd;border-radius:10px;"></textarea>
+        <p style="margin:12px 0 0;font-size:12px;color:#6a6f76;">We currently deliver in Wadsworth (44281). Checkout is handled securely by Stripe.</p>
       </div>
-      <div style="padding:14px 20px; border-top:1px solid #eee; display:flex; gap:10px; justify-content:flex-end;">
-        <button type="button" data-cancel class="btn btn-ghost" style="padding:10px 14px; border-radius:10px; border:1px solid #ddd; background:#fff; cursor:pointer;">Cancel</button>
-        <button type="button" data-continue class="btn btn-primary" style="padding:10px 14px; border-radius:10px; border:1px solid #111; background:#111; color:#fff; cursor:pointer;">Continue</button>
+      <div style="padding:14px 20px;border-top:1px solid #eee;display:flex;gap:10px;justify-content:flex-end;">
+        <button type="button" data-cancel class="btn btn-ghost" style="padding:10px 14px;border-radius:10px;border:1px solid #ddd;background:#fff;cursor:pointer;">Cancel</button>
+        <button type="button" data-continue class="btn btn-primary" style="padding:10px 14px;border-radius:10px;border:1px solid #111;background:#111;color:#fff;cursor:pointer;">Continue</button>
       </div>
     </div>
   `;
@@ -217,43 +172,34 @@ function buildDeliveryModal(){
   el.querySelector('[data-cancel]').addEventListener('click', ()=> closeDeliveryModal());
   deliveryModalEl = el;
 }
-function closeDeliveryModal(){
-  if (!deliveryModalEl) return;
-  deliveryModalEl.remove();
-  deliveryModalEl = null;
-}
+function closeDeliveryModal(){ if (!deliveryModalEl) return; deliveryModalEl.remove(); deliveryModalEl=null; }
 function promptDeliveryDetails(){
   return new Promise(resolve=>{
     buildDeliveryModal();
     const el = deliveryModalEl;
     const dateInput = el.querySelector('#bn-date');
-    const timeSel = el.querySelector('#bn-time');
+    const timeSel   = el.querySelector('#bn-time');
+    const notesEl   = el.querySelector('#bn-notes');
     el.querySelector('[data-continue]').addEventListener('click', ()=>{
       const d = dateInput.value;
       const t = timeSel.value;
+      const n = (notesEl.value || '').slice(0,500);
       if (!d){ alert('Choose a delivery date.'); dateInput.focus(); return; }
       if (!t){ alert('Choose a time window.'); timeSel.focus(); return; }
-      // Sync to cart inputs if present (so user sees consistency later)
+      // Sync to cart inputs if present
       if ($date) $date.value = d;
-      if ($time) { $time.value = t; if ($time.value !== t){ // fallback if option not present
-        const opt = document.createElement('option'); opt.value = t; opt.textContent = t; $time.appendChild(opt); $time.value = t;
-      }}
+      if ($time) { $time.value = t; if ($time.value !== t){ const opt=document.createElement('option'); opt.value=t; opt.textContent=t; $time.appendChild(opt); $time.value=t; } }
+      if ($notes) $notes.value = n;
       closeDeliveryModal();
-      resolve({ date: d, time: t });
+      resolve({ date: d, time: t, notes: n });
     }, { once:true });
   });
 }
 
-/* =====================
-   PRODUCT BUTTONS (single source of truth)
-   ===================== */
+/* Product buttons */
 function initProductButtons(){
-  /* Defensive: ensure buttons never submit a form */
-  $$('[data-add], [data-buy-now]').forEach(btn=>{
-    if (!btn.hasAttribute('type')) btn.setAttribute('type','button');
-  });
+  $$('[data-add], [data-buy-now]').forEach(btn=>{ if (!btn.hasAttribute('type')) btn.setAttribute('type','button'); });
 
-  /* Add to cart */
   $$('[data-add]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const price = btn.getAttribute('data-price');
@@ -269,7 +215,6 @@ function initProductButtons(){
     });
   });
 
-  /* Buy Now (supports subscription or one-time) */
   $$('[data-buy-now]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const price = btn.getAttribute('data-price');
@@ -278,20 +223,19 @@ function initProductButtons(){
       const name  = btn.getAttribute('data-name') || 'Item';
       if (!price){ alert('Missing price id'); return; }
 
-      // If page-level inputs exist and are set, use them; otherwise prompt.
       let deliveryDate = $date ? $date.value : '';
       let timeWindow   = $time ? $time.value : '';
+      let notes        = $notes ? $notes.value : '';
       if (!deliveryDate || !timeWindow){
         const picked = await promptDeliveryDetails();
         if (!picked) return;
         deliveryDate = picked.date;
         timeWindow   = picked.time;
+        notes        = picked.notes || notes || '';
       }
 
-      // Disable this button during checkout
       const prev = btn.textContent;
-      btn.disabled = true;
-      btn.textContent = 'Processing…';
+      btn.disabled = true; btn.textContent = 'Processing…';
 
       try{
         const res = await fetch('/api/create-checkout-session', {
@@ -301,7 +245,8 @@ function initProductButtons(){
             mode,
             items: [{ price, quantity: qty, name }],
             deliveryDate,
-            timeWindow
+            timeWindow,
+            notes
           })
         });
 
@@ -313,7 +258,6 @@ function initProductButtons(){
             alert(`That window is full. Try: ${s}`);
             return;
           }
-          // Show more helpful message from server if present
           const msg = data?.message || data?.error || `Checkout failed (${res.status}).`;
           console.error('Checkout failed', res.status, data);
           alert(msg);
@@ -325,26 +269,19 @@ function initProductButtons(){
         console.error(err);
         alert('Checkout failed (network).');
       }finally{
-        btn.disabled = false;
-        btn.textContent = prev;
+        btn.disabled = false; btn.textContent = prev;
       }
     });
   });
 }
 
-/* =====================
-   CHECKOUT (cart drawer)
-   ===================== */
-function disableCheckout(disabled){
-  if ($cartCheckout){
-    $cartCheckout.disabled = !!disabled;
-    $cartCheckout.textContent = disabled ? 'Processing…' : 'Checkout';
-  }
-}
+/* Checkout (cart drawer) */
+function disableCheckout(disabled){ if ($cartCheckout){ $cartCheckout.disabled=!!disabled; $cartCheckout.textContent = disabled ? 'Processing…' : 'Checkout'; } }
 async function handleCartCheckout(){
   if (!cart.length){ toast('Your cart is empty.'); return; }
   const deliveryDate = $date ? $date.value : '';
   const timeWindow   = $time ? $time.value : '';
+  const notes        = $notes ? ($notes.value || '').slice(0,500) : '';
   if (!deliveryDate){ toast('Choose a delivery date first.'); if ($date) $date.focus(); return; }
   if (!timeWindow){ toast('Choose a time window first.'); if ($time) $time.focus(); return; }
 
@@ -357,7 +294,8 @@ async function handleCartCheckout(){
         mode: 'payment',
         items: cart.map(i => ({ price: i.price, quantity: i.quantity, name: i.name })),
         deliveryDate,
-        timeWindow
+        timeWindow,
+        notes
       })
     });
 
@@ -385,9 +323,7 @@ async function handleCartCheckout(){
 }
 if ($cartCheckout) $cartCheckout.addEventListener('click', handleCartCheckout);
 
-/* =====================
-   DATE / TIME helpers (prefill in cart drawer)
-   ===================== */
+/* Date/time defaults */
 (function initDateTime(){
   if ($date){
     const today = new Date();
@@ -397,20 +333,10 @@ if ($cartCheckout) $cartCheckout.addEventListener('click', handleCartCheckout);
     $date.min = `${yyyy}-${mm}-${dd}`;
     if (!$date.value) $date.value = `${yyyy}-${mm}-${dd}`;
   }
-  if ($time){
-    if (!$time.children.length){
-      getWindows().forEach(w=>{
-        const opt = document.createElement('option');
-        opt.value = w; opt.textContent = w;
-        $time.appendChild(opt);
-      });
-    }
-  }
+  if ($time && !$time.children.length){ getWindows().forEach(w=>{ const opt=document.createElement('option'); opt.value=w; opt.textContent=w; $time.appendChild(opt); }); }
 })();
 
-/* =====================
-   Flavor vote + Merch notify forms (optional)
-   ===================== */
+/* Optional forms */
 const $voteForm = document.getElementById('vote-form');
 const $voteMsg  = document.getElementById('vote-msg');
 if ($voteForm){
@@ -420,21 +346,12 @@ if ($voteForm){
     const flavor = (form.get('flavor')||'').toString().trim();
     if (!flavor){ toast('Pick a flavor first.'); return; }
     try{
-      const r = await fetch('/api/vote-flavor', {
-        method: 'POST', headers: { 'Content-Type':'application/json' },
-        body: JSON.stringify({ flavor })
-      });
-      if (r.ok){
-        if ($voteMsg){ $voteMsg.textContent = 'Thanks for voting!'; }
-        toast('Vote recorded. Thanks!');
-        $voteForm.reset();
-      }else{
-        toast('Could not record vote. Try again later.');
-      }
+      const r = await fetch('/api/vote-flavor', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ flavor }) });
+      if (r.ok){ if ($voteMsg) $voteMsg.textContent='Thanks for voting!'; toast('Vote recorded. Thanks!'); $voteForm.reset(); }
+      else toast('Could not record vote. Try again later.');
     }catch{ toast('Network error.'); }
   });
 }
-
 const $merchForm = document.getElementById('merch-form');
 const $merchMsg  = document.getElementById('merch-msg');
 if ($merchForm){
@@ -444,31 +361,20 @@ if ($merchForm){
     const email = (form.get('email')||'').toString().trim();
     if (!email){ toast('Enter your email.'); return; }
     try{
-      const r = await fetch('/api/notify-merch', {
-        method: 'POST', headers: { 'Content-Type':'application/json' },
-        body: JSON.stringify({ email })
-      });
-      if (r.ok){
-        if ($merchMsg){ $merchMsg.textContent = 'We’ll email you when merch drops!'; }
-        toast('Added to waitlist ✅');
-        $merchForm.reset();
-      }else{
-        toast('Could not add you right now. Try again later.');
-      }
+      const r = await fetch('/api/notify-merch', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email }) });
+      if (r.ok){ if ($merchMsg) $merchMsg.textContent='We’ll email you when merch drops!'; toast('Added to waitlist ✅'); $merchForm.reset(); }
+      else toast('Could not add you right now. Try again later.');
     }catch{ toast('Network error.'); }
   });
 }
 
-/* =====================
-   Fun: Muffin Tapper (thank-you + home)
-   ===================== */
+/* Fun: Muffin Tapper */
 (function initMuffinTapper(){
   const btn = document.getElementById('muffin-tapper');
   if (!btn) return;
   const countEl = btn.querySelector('.mt-count');
   let count = parseInt(localStorage.getItem('mt_count')||'0',10) || 0;
   if (countEl) countEl.textContent = String(count);
-
   btn.addEventListener('click', ()=>{
     count += 1;
     localStorage.setItem('mt_count', String(count));
@@ -478,11 +384,5 @@ if ($merchForm){
   });
 })();
 
-/* =====================
-   Init
-   ===================== */
-(function init(){
-  loadCart();
-  renderCart(true);
-  initProductButtons();
-})();
+/* Init */
+(function init(){ loadCart(); renderCart(true); initProductButtons(); })();
