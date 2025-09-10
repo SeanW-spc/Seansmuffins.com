@@ -152,6 +152,99 @@ if ($cartBackdrop) $cartBackdrop.addEventListener('click', closeCart);
 if ($cartClear)    $cartClear.addEventListener('click', ()=>{ cart=[]; updateCartUI(); toast('Cart cleared'); announce('Cart cleared'); });
 
 /* =====================
+   DELIVERY POPUP for Buy Now
+   ===================== */
+let deliveryModalEl = null;
+function buildDeliveryModal(){
+  const el = document.createElement('div');
+  el.id = 'delivery-modal';
+  el.setAttribute('role','dialog');
+  el.setAttribute('aria-modal','true');
+  el.style.cssText = `
+    position:fixed; inset:0; z-index:10000;
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(0,0,0,0.48);
+    padding:16px;
+  `;
+  el.innerHTML = `
+    <div style="max-width:480px; width:100%; background:#fff; border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,.2); overflow:hidden; font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;">
+      <div style="padding:16px 20px; border-bottom:1px solid #eee; display:flex; align-items:center; justify-content:space-between;">
+        <h3 style="margin:0; font-size:18px;">Delivery Details</h3>
+        <button type="button" data-close style="border:none; background:#fff; font-size:20px; line-height:1; cursor:pointer;">✕</button>
+      </div>
+      <div style="padding:18px 20px;">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div>
+            <label for="bn-date" style="display:block; font-size:12px; color:#555; margin-bottom:6px;">Date</label>
+            <input type="date" id="bn-date" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:10px;">
+          </div>
+          <div>
+            <label for="bn-time" style="display:block; font-size:12px; color:#555; margin-bottom:6px;">Preferred time</label>
+            <select id="bn-time" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:10px;">
+              <option value="">Select a window…</option>
+            </select>
+          </div>
+        </div>
+        <p style="margin:12px 0 0; font-size:12px; color:#6a6f76;">We currently deliver in Wadsworth (44281). Checkout is handled securely by Stripe.</p>
+      </div>
+      <div style="padding:14px 20px; border-top:1px solid #eee; display:flex; gap:10px; justify-content:flex-end;">
+        <button type="button" data-cancel class="btn btn-ghost" style="padding:10px 14px; border-radius:10px; border:1px solid #ddd; background:#fff; cursor:pointer;">Cancel</button>
+        <button type="button" data-continue class="btn btn-primary" style="padding:10px 14px; border-radius:10px; border:1px solid #111; background:#111; color:#fff; cursor:pointer;">Continue</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(el);
+
+  // Populate windows
+  const sel = el.querySelector('#bn-time');
+  getWindows().forEach(w=>{
+    const opt = document.createElement('option');
+    opt.value = w; opt.textContent = w;
+    sel.appendChild(opt);
+  });
+
+  // Min + default date
+  const input = el.querySelector('#bn-date');
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth()+1).padStart(2,'0');
+  const dd = String(today.getDate()).padStart(2,'0');
+  input.min = `${yyyy}-${mm}-${dd}`;
+  input.value = `${yyyy}-${mm}-${dd}`;
+
+  // Close handlers
+  el.querySelector('[data-close]').addEventListener('click', ()=> closeDeliveryModal());
+  el.querySelector('[data-cancel]').addEventListener('click', ()=> closeDeliveryModal());
+  deliveryModalEl = el;
+}
+function closeDeliveryModal(){
+  if (!deliveryModalEl) return;
+  deliveryModalEl.remove();
+  deliveryModalEl = null;
+}
+function promptDeliveryDetails(){
+  return new Promise(resolve=>{
+    buildDeliveryModal();
+    const el = deliveryModalEl;
+    const dateInput = el.querySelector('#bn-date');
+    const timeSel = el.querySelector('#bn-time');
+    el.querySelector('[data-continue]').addEventListener('click', ()=>{
+      const d = dateInput.value;
+      const t = timeSel.value;
+      if (!d){ alert('Choose a delivery date.'); dateInput.focus(); return; }
+      if (!t){ alert('Choose a time window.'); timeSel.focus(); return; }
+      // Sync to cart inputs if present (so user sees consistency later)
+      if ($date) $date.value = d;
+      if ($time) { $time.value = t; if ($time.value !== t){ // fallback if option not present
+        const opt = document.createElement('option'); opt.value = t; opt.textContent = t; $time.appendChild(opt); $time.value = t;
+      }}
+      closeDeliveryModal();
+      resolve({ date: d, time: t });
+    }, { once:true });
+  });
+}
+
+/* =====================
    PRODUCT BUTTONS (single source of truth)
    ===================== */
 function initProductButtons(){
@@ -185,13 +278,22 @@ function initProductButtons(){
       const name  = btn.getAttribute('data-name') || 'Item';
       if (!price){ alert('Missing price id'); return; }
 
-      const deliveryDate = $date ? $date.value : '';
-      const timeWindow   = $time ? $time.value : '';
-      if (!deliveryDate){ toast('Choose a delivery date first.'); if ($date) $date.focus(); return; }
-      if (!timeWindow){ toast('Choose a time window first.'); if ($time) $time.focus(); return; }
+      // If page-level inputs exist and are set, use them; otherwise prompt.
+      let deliveryDate = $date ? $date.value : '';
+      let timeWindow   = $time ? $time.value : '';
+      if (!deliveryDate || !timeWindow){
+        const picked = await promptDeliveryDetails();
+        if (!picked) return;
+        deliveryDate = picked.date;
+        timeWindow   = picked.time;
+      }
+
+      // Disable this button during checkout
+      const prev = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Processing…';
 
       try{
-        disableCheckout(true);
         const res = await fetch('/api/create-checkout-session', {
           method: 'POST',
           headers: { 'Content-Type':'application/json' },
@@ -202,24 +304,29 @@ function initProductButtons(){
             timeWindow
           })
         });
+
+        let data = {};
+        try { data = await res.json(); } catch {}
         if (!res.ok){
-          const data = await res.json().catch(()=>({}));
           if (res.status === 409 && data?.error === 'SLOT_FULL'){
             const s = (data.suggestions||[]).join(' • ') || 'another time';
             alert(`That window is full. Try: ${s}`);
             return;
           }
+          // Show more helpful message from server if present
+          const msg = data?.message || data?.error || `Checkout failed (${res.status}).`;
           console.error('Checkout failed', res.status, data);
-          alert(`Checkout failed (${res.status}). ${data?.error || ''}`);
+          alert(msg);
           return;
         }
-        const { url } = await res.json();
-        if (url) window.location.href = url;
+        if (data?.url) window.location.href = data.url;
+        else alert('Could not start checkout. Please try again.');
       }catch(err){
         console.error(err);
         alert('Checkout failed (network).');
       }finally{
-        disableCheckout(false);
+        btn.disabled = false;
+        btn.textContent = prev;
       }
     });
   });
@@ -253,18 +360,21 @@ async function handleCartCheckout(){
         timeWindow
       })
     });
+
+    let data = {};
+    try { data = await res.json(); } catch {}
     if (!res.ok){
-      const data = await res.json().catch(()=>({}));
       if (res.status === 409 && data?.error === 'SLOT_FULL'){
         const s = (data.suggestions||[]).join(' • ') || 'another time';
         alert(`That window is full. Try: ${s}`);
         return;
       }
+      const msg = data?.message || data?.error || `Checkout failed (${res.status}).`;
       console.error('Checkout failed', res.status, data);
-      alert(`Checkout failed (${res.status}). ${data?.error || ''}`);
+      alert(msg);
       return;
     }
-    const { url } = await res.json();
+    const { url } = data;
     if (url) window.location.href = url;
   }catch(err){
     console.error(err);
@@ -276,11 +386,10 @@ async function handleCartCheckout(){
 if ($cartCheckout) $cartCheckout.addEventListener('click', handleCartCheckout);
 
 /* =====================
-   DATE / TIME helpers
+   DATE / TIME helpers (prefill in cart drawer)
    ===================== */
 (function initDateTime(){
   if ($date){
-    // Default to today
     const today = new Date();
     const yyyy = today.getFullYear();
     const mm = String(today.getMonth()+1).padStart(2,'0');
