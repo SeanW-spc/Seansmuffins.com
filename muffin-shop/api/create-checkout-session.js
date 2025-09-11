@@ -178,3 +178,7 @@ async function findAlternativeWindows(date, currentWin, qtyNeeded) {
   }
   return out;
 }
+const m = String(mode || 'payment').toLowerCase();
+if (m === 'subscription') {
+  return res.status(403).json({ error: 'subscription_disabled' });
+}
