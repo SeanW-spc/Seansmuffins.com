@@ -1,5 +1,6 @@
 // api/create-checkout-session.js
-// Checks capacity (including SlotCaps override), makes a pending reservation (Slots), then creates a Stripe Checkout Session.
+// Checks capacity (including SlotCaps override), holds a slot, then creates a Stripe Checkout Session.
+// Supports both one-time payments and subscriptions via `mode`.
 
 import Stripe from 'stripe';
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? '', { apiVersion: '2024-06-20' });
@@ -7,10 +8,16 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? '', { apiVersion: '20
 export default async function handler(req, res) {
   try {
     if (req.method !== 'POST') { res.setHeader('Allow','POST'); return res.status(405).json({ error:'method_not_allowed' }); }
-    const { items, deliveryDate, timeWindow, orderNotes } = await readJson(req) || {};
-    if (!Array.isArray(items) || !deliveryDate || !timeWindow) return res.status(400).json({ error:'missing_fields' });
+    const { mode='payment', items, deliveryDate, timeWindow, orderNotes } = await readJson(req) || {};
+    if (!Array.isArray(items) || !deliveryDate || !timeWindow) {
+      return res.status(400).json({ error:'missing_fields' });
+    }
+    const m = (mode || 'payment').toLowerCase();
+    if (m !== 'payment' && m !== 'subscription') {
+      return res.status(400).json({ error:'invalid_mode' });
+    }
 
-    // Capacity logic
+    // Capacity logic for the *first delivery*
     const capacity = await resolveCapacity(deliveryDate, timeWindow);
     const current = await countOccupied(deliveryDate, timeWindow);
     if (current >= capacity){
@@ -22,7 +29,7 @@ export default async function handler(req, res) {
 
     const successUrlBase = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.seansmuffins.com';
     const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
+      mode: m,
       line_items: items.map(i => ({ price: i.price, quantity: i.quantity || 1 })),
       allow_promotion_codes: true,
       success_url: `${successUrlBase}/thank-you.html?session_id={CHECKOUT_SESSION_ID}`,
@@ -46,6 +53,10 @@ export default async function handler(req, res) {
     res.status(200).json({ url: session.url });
   } catch (e) {
     console.error('create-checkout-session error', e);
+    // Stripe error when using recurring price with wrong mode, etc.
+    if (String(e?.message || '').includes('recurring') && String(e?.message || '').includes('mode')) {
+      return res.status(400).json({ error:'subscription_not_allowed' });
+    }
     res.status(500).json({ error:'server_error' });
   }
 }
@@ -78,8 +89,7 @@ async function countOccupied(date, win){
   const table = encodeURIComponent(process.env.AIRTABLE_TABLE_SLOTS || 'Slots');
   const url = `https://api.airtable.com/v0/${base}/${table}`;
   const u = new URL(url);
-  // confirmed + recent pending (updated within last 60 min)
-  const cutoff = new Date(Date.now() - 60*60*1000).toISOString();
+  const cutoff = new Date(Date.now() - 60*60*1000).toISOString(); // 60 min holds
   const formula = `AND({Date}='${date}', {Window}='${win}', OR({Status}='confirmed', AND({Status}='pending', IS_AFTER({Updated}, '${cutoff}'))))`;
   u.searchParams.set('filterByFormula', formula);
   u.searchParams.set('pageSize','100');
