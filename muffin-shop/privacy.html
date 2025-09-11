@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Privacy Policy — Sean’s Muffins</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="index.html">
+        <img class="brand-logo" src="images/logo.png" alt="Sean’s Muffins logo" />
+        <span>Sean’s Muffins</span>
+      </a>
+      <nav id="primary-nav" class="nav">
+        <a href="index.html">Home</a>
+        <a href="muffins.html">Muffins</a>
+        <a href="new-flavors.html">New Flavors</a>
+        <a href="merch.html">Merch</a>
+        <a href="about.html">About</a>
+      </nav>
+      <button id="cart-button" class="cart-button" aria-label="Open cart" title="Cart">🧺
+        <span class="cart-count" id="cart-count">0</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="section">
+    <div class="container">
+      <h1>Privacy Policy</h1>
+      <p><em>Last updated: <span id="pp-date"></span></em></p>
+
+      <h2>Summary</h2>
+      <p>We collect only the information needed to deliver your order: contact details, delivery address and time window, and optional notes (e.g., delivery instructions or allergies). Payments are processed by Stripe. Orders and delivery scheduling are managed in Airtable. We don’t sell your data or use advertising trackers.</p>
+
+      <h2>Information we collect</h2>
+      <ul>
+        <li><strong>Order & delivery details:</strong> items ordered, preferred delivery date/time window, address.</li>
+        <li><strong>Contact details:</strong> name, email, phone (for receipts and delivery updates).</li>
+        <li><strong>Notes (optional):</strong> delivery instructions or allergy info you choose to provide.</li>
+        <li><strong>Payment:</strong> handled by Stripe; we don’t store card numbers on our servers.</li>
+        <li><strong>Technical:</strong> essential cookies/local storage to keep your cart; Stripe may set cookies for fraud prevention.</li>
+      </ul>
+
+      <h2>How we use your information</h2>
+      <ul>
+        <li>To take payment and complete your order.</li>
+        <li>To plan deliveries and communicate updates.</li>
+        <li>To prevent duplicate bookings for full time windows.</li>
+        <li>To comply with legal obligations (e.g., tax records).</li>
+      </ul>
+
+      <h2>Sharing</h2>
+      <ul>
+        <li><strong>Stripe</strong> (payments & receipts).</li>
+        <li><strong>Airtable</strong> (order and delivery management).</li>
+        <li><strong>Hosting/infra</strong> (e.g., Vercel) to run the website.</li>
+      </ul>
+      <p>We do not sell your personal information.</p>
+
+      <h2>Data retention</h2>
+      <p>Order records are kept as required for accounting and operations. Optional allergy notes are collected only to safely fulfill your order and are not used for marketing.</p>
+
+      <h2>Your choices</h2>
+      <ul>
+        <li>You can request access, correction, or deletion of your personal information, subject to legal limits.</li>
+        <li>You can choose not to provide optional notes.</li>
+      </ul>
+
+      <h2>Security</h2>
+      <p>We use Stripe for secure payment processing and industry-standard practices to protect your information. However, no method is 100% secure.</p>
+
+      <h2>Children</h2>
+      <p>Our site is not directed to children under 13, and we do not knowingly collect information from them.</p>
+
+      <h2>Changes</h2>
+      <p>We may update this policy. We’ll change the “Last updated” date above when we do.</p>
+
+      <h2>Contact</h2>
+      <p>Questions? Email us at <a href="mailto:hello@seansmuffins.com">hello@seansmuffins.com</a>.</p>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      © <span id="y"></span> Sean’s Muffins ·
+      <a href="privacy.html" aria-current="page">Privacy</a> ·
+      <a href="cookies.html">Cookies</a>
+    </div>
+  </footer>
+
+  <div id="cookie-banner" class="cookie-banner" hidden>
+    <div class="cookie-inner">
+      <div>
+        We use essential cookies/local storage to run the site and Stripe for secure checkout.
+        See our <a href="cookies.html">Cookies</a> and <a href="privacy.html">Privacy</a>.
+      </div>
+      <div class="cookie-actions">
+        <button id="cookie-accept" class="btn btn-primary">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script src="js/app.js"></script>
+  <script src="js/cookies.js"></script>
+  <script>
+    // set dates
+    (function(){
+      const d = document.getElementById('pp-date');
+      if (d) d.textContent = new Date().toLocaleDateString();
+      const y = document.getElementById('y');
+      if (y) y.textContent = new Date().getFullYear();
+    })();
+  </script>
+</body>
+</html>
