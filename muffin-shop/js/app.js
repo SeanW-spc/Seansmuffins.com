@@ -156,6 +156,8 @@ function closeCart(){
   $cartDrawer.setAttribute('aria-hidden','true');
   $cartDrawer.classList.remove('open');
   if ($cartBackdrop) $cartBackdrop.classList.remove('show');
+  document.documentElement.style.overflow = '';
+  document.body.style.overflow = '';
 }
 on($cartOpen, 'click', (e)=>{ e.preventDefault(); openCart(); });
 on($cartClose,'click', (e)=>{ e.preventDefault(); closeCart(); });
@@ -182,6 +184,7 @@ function renderCart(){
             <button class="qty inc" aria-label="Increase">+</button>
             <button class="qty remove" aria-label="Remove">✕</button>
           </div>`;
+
         const $dec = $('.dec', div);
         const $inc = $('.inc', div);
         const $inp = $('.qty-input', div);
@@ -222,10 +225,18 @@ on($cartClear, 'click', () => {
 });
 
 /* ============ Product buttons ============ */
+function onTap(el, handler){
+  if (!el) return;
+  const hasPointer = 'onpointerup' in window;
+  if (hasPointer){
+    el.addEventListener('pointerup', (e)=>{ if (e.pointerType !== 'mouse') e.preventDefault(); handler(e); }, { passive:true });
+  }
+  el.addEventListener('click', handler);
+}
 function initProductButtons(){
   // Add-to-cart
   $$('[data-add]').forEach(btn => {
-    on(btn, 'click', () => {
+    onTap(btn, () => {
       const price = btn.getAttribute('data-price');
       const name  = btn.getAttribute('data-name') || 'Muffin Box';
       const qty   = parseInt(btn.getAttribute('data-qty')||'1',10) || 1;
@@ -242,32 +253,29 @@ function initProductButtons(){
     });
   });
 
-  // Buy-now (we route through the cart for delivery details)
+  // Buy-now (route through cart for date/window)
   $$('[data-buy-now]').forEach(btn => {
-    on(btn, 'click', () => {
+    onTap(btn, () => {
       const price = btn.getAttribute('data-price');
       const name  = btn.getAttribute('data-name') || 'Muffin Box';
       const qty   = parseInt(btn.getAttribute('data-qty')||'1',10) || 1;
-      const mode  = (btn.getAttribute('data-mode') || 'payment').toLowerCase(); // 'payment' | 'subscription'
+      const mode  = (btn.getAttribute('data-mode') || 'payment').toLowerCase();
       if (mode === 'subscription'){
         toast('Subscriptions are coming soon.');
         return;
       }
       if (!price){ toast('Missing price id'); return; }
 
-      // Add to cart (or bump) then open cart
       const idx = cart.findIndex(i => i.price === price);
       if (idx >= 0) cart[idx].quantity = (parseInt(cart[idx].quantity||0,10) || 0) + qty;
       else cart.push({ price, name, quantity: qty });
 
       saveCart(); renderCart(); updateCartBadge(); openCart();
       toast(`Added ${qty} × ${name} — pick a delivery time to checkout.`);
-      // focus date if present
       if ($deliveryDate) $deliveryDate.focus();
     });
   });
 }
-
 /* ============ Checkout ============ */
 async function createCheckoutSession(payload){
   const resp = await fetch('/api/create-checkout-session', {
@@ -287,14 +295,13 @@ async function createCheckoutSession(payload){
 on($cartCheckout, 'click', async () => {
   try {
     if (!cart.length){ toast('Your cart is empty'); return; }
-    const date = $deliveryDate && $deliveryDate.value ? $deliveryDate.value : '';
-    const win  = $deliveryTime && $deliveryTime.value ? $deliveryTime.value : '';
-    const notes = $orderNotes && $orderNotes.value ? $orderNotes.value.trim() : '';
+    const date  = $deliveryDate?.value || '';
+    const win   = $deliveryTime?.value || '';
+    const notes = ($orderNotes?.value || '').trim();
 
-    if (!date){ toast('Please choose a delivery date'); if ($deliveryDate) $deliveryDate.focus(); return; }
-    if (!win){ toast('Please choose a delivery window'); if ($deliveryTime) $deliveryTime.focus(); return; }
+    if (!date){ toast('Please choose a delivery date'); $deliveryDate?.focus(); return; }
+    if (!win){  toast('Please choose a delivery window'); $deliveryTime?.focus(); return; }
 
-    // POST to server
     const payload = {
       mode: 'payment',
       items: cart.map(i => ({ price: i.price, quantity: parseInt(i.quantity||1,10) || 1 })),
@@ -305,17 +312,36 @@ on($cartCheckout, 'click', async () => {
 
     rememberPendingOrder({ date, win, notes, items: cart.map(i => ({...i})) });
 
-    const { id, url } = await createCheckoutSession(payload);
+    const resp = await fetch('/api/create-checkout-session', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify(payload)
+    });
 
-    // Clear cart immediately to avoid double charges if user back-navs
-    cart = []; saveCart(); renderCart(); updateCartBadge();
-
-    if (url){
-      window.location.href = url;
+    if (!resp.ok){
+      let errCode = 'checkout_failed';
+      try { const j = await resp.json(); errCode = j?.error || errCode; } catch {}
+      const map = {
+        window_full: 'That delivery window is full. Please pick another window.',
+        capacity_full: 'That delivery window is full. Please pick another window.',
+        invalid_window: 'Please choose a delivery window.',
+        invalid_date: 'Please choose a valid delivery date.',
+        subscription_disabled: 'Subscriptions are coming soon.',
+        method_not_allowed: 'Please refresh and try again.',
+        airtable_auth: 'Server auth issue. Try again in a minute.'
+      };
+      toast(map[errCode] || 'Checkout failed. Please try again.');
       return;
     }
+
+    const { id, url } = await resp.json();
+
+    // Clear cart to avoid dupes on back-nav
+    cart = []; saveCart(); renderCart(); updateCartBadge();
+
+    if (url){ window.location.href = url; return; }
+
     if (!window.Stripe || !window.STRIPE_PUBLISHABLE_KEY){
-      // Fallback: if Stripe.js not present, try direct URL or error
       if (id){ window.location.href = `/thank-you.html?session_id=${encodeURIComponent(id)}`; }
       else throw new Error('missing_stripe_js');
       return;
@@ -325,14 +351,13 @@ on($cartCheckout, 'click', async () => {
     if (error){ throw error; }
   } catch (e){
     console.error('Checkout error', e);
-    const msg = (e && e.message) ? e.message : 'Checkout failed';
-    if (msg === 'subscription_disabled'){
-      toast('Subscriptions are coming soon.'); return;
-    }
-    toast('Checkout failed. Please try again.');
+    const msg = (e && e.message) ? e.message : '';
+    const map = {
+      subscription_disabled: 'Subscriptions are coming soon.'
+    };
+    toast(map[msg] || 'Checkout failed. Please try again.');
   }
 });
-
 /* ============ Thank-you hydration (optional) ============ */
 function renderThankYou(){
   const host = $('#thank-you-summary');
