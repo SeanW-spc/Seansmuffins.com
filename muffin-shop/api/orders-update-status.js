@@ -1,8 +1,15 @@
 // api/orders-update-status.js
-// PATCH a single order's status / delivery_time / route_position.
-// Auth: header "X-Admin-Token: <ADMIN_API_TOKEN>"
+// PATCH a single order's status / delivery_time / route_position + CORS.
 
 export default async function handler(req, res) {
+  // CORS
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Admin-Token');
+    res.status(204).end(); return;
+  }
+  res.setHeader('Access-Control-Allow-Origin', '*');
+
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ ok: false, error: 'method_not_allowed' });
@@ -12,8 +19,8 @@ export default async function handler(req, res) {
     if (!process.env.ADMIN_API_TOKEN || token !== process.env.ADMIN_API_TOKEN) {
       return res.status(401).json({ ok: false, error: 'unauthorized' });
     }
-
-    const { id, status, delivery_time, route_position } = await req.json?.() || await readJson(req);
+    const body = await readJson(req);
+    const { id, status, delivery_time, route_position } = body || {};
     if (!id) return res.status(400).json({ ok: false, error: 'missing_id' });
 
     const fields = {};
@@ -33,7 +40,6 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({ records: [{ id, fields }] })
     });
-
     if (!r.ok) {
       const txt = await r.text().catch(()=> '');
       return res.status(500).json({ ok: false, error: 'airtable_update_failed', detail: txt });
