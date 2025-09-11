@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cookies — Sean’s Muffins</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="index.html">
+        <img class="brand-logo" src="images/logo.png" alt="Sean’s Muffins logo" />
+        <span>Sean’s Muffins</span>
+      </a>
+      <nav id="primary-nav" class="nav">
+        <a href="index.html">Home</a>
+        <a href="muffins.html">Muffins</a>
+        <a href="new-flavors.html">New Flavors</a>
+        <a href="merch.html">Merch</a>
+        <a href="about.html">About</a>
+      </nav>
+      <button id="cart-button" class="cart-button" aria-label="Open cart" title="Cart">🧺
+        <span class="cart-count" id="cart-count">0</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="section">
+    <div class="container">
+      <h1>Cookies & Local Storage</h1>
+      <p><em>Last updated: <span id="ck-date"></span></em></p>
+
+      <p>We use essential browser storage and cookies to make the site work and to process payments securely with Stripe. We do not use advertising cookies.</p>
+
+      <h2>What we use</h2>
+      <ul>
+        <li><strong>Local storage (essential):</strong> remembers your cart and delivery selections.</li>
+        <li><strong>Stripe cookies (essential):</strong> used for secure checkout and fraud prevention.</li>
+      </ul>
+
+      <h2>Your choices</h2>
+      <p>You can clear your cart and consent at any time by clearing your browser storage/cookies. Blocking essential cookies may prevent checkout from working.</p>
+
+      <h2>Contact</h2>
+      <p>Questions? Email us at <a href="mailto:hello@seansmuffins.com">hello@seansmuffins.com</a>.</p>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      © <span id="y"></span> Sean’s Muffins ·
+      <a href="privacy.html">Privacy</a> ·
+      <a href="cookies.html" aria-current="page">Cookies</a>
+    </div>
+  </footer>
+
+  <div id="cookie-banner" class="cookie-banner" hidden>
+    <div class="cookie-inner">
+      <div>
+        We use essential cookies/local storage to run the site and Stripe for secure checkout.
+        See our <a href="cookies.html">Cookies</a> and <a href="privacy.html">Privacy</a>.
+      </div>
+      <div class="cookie-actions">
+        <button id="cookie-accept" class="btn btn-primary">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script src="js/app.js"></script>
+  <script src="js/cookies.js"></script>
+  <script>
+    (function(){
+      const d = document.getElementById('ck-date');
+      if (d) d.textContent = new Date().toLocaleDateString();
+      const y = document.getElementById('y');
+      if (y) y.textContent = new Date().getFullYear();
+    })();
+  </script>
+</body>
+</html>
