@@ -1,4 +1,4 @@
-/* Sean’s Muffins — app.js (FULL FILE, cleaned) */
+/* Sean’s Muffins — app.js (FULL FILE, fixed recursion, bigger modal, working add-to-cart, checkout) */
 
 /* ============ Tiny helpers ============ */
 const $  = (sel, root=document) => root.querySelector(sel);
@@ -79,7 +79,6 @@ function saveCart(){
     localStorage.setItem(CART_KEY, JSON.stringify(cart));
     if (bc) bc.postMessage({ type:'cart', from:CLIENT_ID, cart: cart.map(i => ({...i})) });
   } catch {}
-  updateCartUI();
 }
 function cartItemsTotal(){
   return cart.reduce((n,i)=> n + (parseInt(i.quantity||0,10) || 0), 0);
@@ -97,8 +96,8 @@ function readPendingOrder(){
 }
 function clearPendingOrder(){ try{ localStorage.removeItem(PENDING_KEY); }catch{} }
 
-/* Cart UI */
-function renderCart(noSave){
+/* Cart UI (no saving inside to avoid recursion) */
+function renderCart(){
   if ($cartItems){
     $cartItems.innerHTML = '';
     if (!cart.length){
@@ -118,18 +117,26 @@ function renderCart(noSave){
             <button data-act="remove" type="button" aria-label="Remove" title="Remove" style="margin-left:6px;border-color:#ffd3db">✕</button>
           </div>
         `;
-        on(div.querySelector('[data-act="dec"]'), 'click', ()=>{ item.quantity = Math.max(1, (item.quantity||1)-1); updateCartUI(); });
-        on(div.querySelector('[data-act="inc"]'), 'click', ()=>{ item.quantity = (item.quantity||0)+1; updateCartUI(); });
-        on(div.querySelector('[data-act="remove"]'), 'click', ()=>{ cart.splice(idx,1); updateCartUI(); });
+        on(div.querySelector('[data-act="dec"]'), 'click', ()=>{
+          item.quantity = Math.max(1, (item.quantity||1)-1);
+          saveCart(); updateCartUI();
+        });
+        on(div.querySelector('[data-act="inc"]'), 'click', ()=>{
+          item.quantity = (item.quantity||0)+1;
+          saveCart(); updateCartUI();
+        });
+        on(div.querySelector('[data-act="remove"]'), 'click', ()=>{
+          cart.splice(idx,1);
+          saveCart(); updateCartUI();
+        });
         $cartItems.appendChild(div);
       });
     }
     if ($cartItemCount) { $cartItemCount.textContent = String(cartItemsTotal()); }
   }
-  if (!noSave) { saveCart(); }
 }
-function updateCartUI(){ renderCart(false); updateCartBadge(); }
 function updateCartBadge(){ if ($cartCount) { $cartCount.textContent = String(cartItemsTotal()); } }
+function updateCartUI(){ renderCart(); updateCartBadge(); }
 
 /* Cross-tab sync */
 if (bc){
@@ -138,16 +145,16 @@ if (bc){
     if (!d || d.from === CLIENT_ID) return;
     if (d.type === 'cart'){
       cart = Array.isArray(d.cart) ? d.cart : [];
-      renderCart(true); // noSave
-      updateCartUI();
+      renderCart();
+      updateCartBadge();
     }
   };
 }
 window.addEventListener('storage', (e) => {
   if (e.key === CART_KEY){
     try { cart = JSON.parse(e.newValue || '[]'); } catch { cart = []; }
-    renderCart(true);
-    updateCartUI();
+    renderCart();
+    updateCartBadge();
   }
 });
 
@@ -157,7 +164,7 @@ function closeCart(){ if ($cartDrawer) $cartDrawer.classList.remove('open'); if 
 on($cartBtn,'click',openCart);
 on($cartClose,'click',closeCart);
 on($cartBackdrop,'click',closeCart);
-on($cartClear,'click',()=>{ cart=[]; updateCartUI(); toast('Cart cleared'); announce('Cart cleared'); });
+on($cartClear,'click',()=>{ cart=[]; saveCart(); updateCartUI(); toast('Cart cleared'); announce('Cart cleared'); });
 
 /* ============ Availability helper (on 409) ============ */
 function pickNewWindowModal({ suggestions=[], current='' }){
@@ -165,7 +172,7 @@ function pickNewWindowModal({ suggestions=[], current='' }){
     const el = document.createElement('div');
     el.style.cssText = 'position:fixed;inset:0;z-index:10001;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.48);padding:16px;';
     el.innerHTML = `
-      <div style="max-width:480px;width:100%;background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.2);overflow:hidden;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
+      <div style="max-width:560px;width:96%;background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.2);overflow:hidden;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
         <div style="padding:16px 20px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;">
           <h3 style="margin:0;font-size:18px;">That window is full</h3>
           <button type="button" data-x style="font-size:20px;background:#fff;border:none;cursor:pointer;">✕</button>
@@ -200,18 +207,18 @@ function buildDeliveryModal(){
   el.setAttribute('aria-modal','true');
   el.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.48);padding:16px;';
   el.innerHTML = `
-    <div style="max-width:520px;width:100%;background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.2);overflow:hidden;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
-      <div style="padding:16px 20px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between;">
-        <h3 style="margin:0;font-size:18px;">Delivery details</h3>
+    <div style="max-width:680px;width:96%;background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.2);overflow:hidden;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
+      <div style="padding:18px 22px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between;">
+        <h3 style="margin:0;font-size:20px;">Delivery details</h3>
         <button type="button" data-close style="font-size:20px;background:#fff;border:none;cursor:pointer;">✕</button>
       </div>
-      <div style="padding:16px 20px;">
-        <div class="row" style="display:flex;gap:12px;flex-wrap:wrap;">
-          <div style="flex:1;min-width:160px;">
+      <div style="padding:18px 22px;">
+        <div class="row" style="display:flex;gap:14px;flex-wrap:wrap;">
+          <div style="flex:1;min-width:200px;">
             <label for="bn-date">Date</label>
             <input type="date" id="bn-date" required>
           </div>
-          <div style="flex:1;min-width:160px;">
+          <div style="flex:1;min-width:200px;">
             <label for="bn-time">Preferred time</label>
             <select id="bn-time" required>
               <option value="">Select a window…</option>
@@ -221,9 +228,9 @@ function buildDeliveryModal(){
         </div>
         <div style="margin-top:12px;">
           <label for="bn-notes">Notes (optional)</label>
-          <textarea id="bn-notes" rows="3" placeholder="Delivery notes / allergies (optional)"></textarea>
+          <textarea id="bn-notes" rows="4" placeholder="Delivery notes / allergies (optional)"></textarea>
         </div>
-        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
           <button type="button" data-cancel class="btn btn-ghost">Cancel</button>
           <button type="button" data-continue class="btn btn-primary">Continue</button>
         </div>
@@ -296,7 +303,7 @@ function initProductButtons(){
       const existing = cart.find(i => i.price === price);
       if (existing) existing.quantity = (existing.quantity||0) + 1;
       else cart.push({ price, name, quantity: 1 });
-      saveCart();
+      saveCart(); updateCartUI();
       toast('Added to cart');
       announce('Cart updated');
     });
@@ -581,7 +588,8 @@ if ($merchForm){
 /* ============ Init ============ */
 (function init(){
   loadCart();
-  renderCart(true);     // noSave
+  renderCart();
+  updateCartBadge();
   initProductButtons();
   renderThankYou();
 })();
