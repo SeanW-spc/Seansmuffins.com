@@ -1,12 +1,15 @@
-/* js/app.js — Sean’s Muffins (Buy Now modal + robust checkout)
-   - Fixes “missing fields” by reliably capturing price/date/time
-   - Works with cart checkout and thank-you summary
+/* js/app.js — Sean’s Muffins
+   - Add to cart, cart drawer, badge
+   - Buy Now modal (date/time/notes) → Stripe
+   - Subscribe Now supported (sends mode:'subscription')
+   - Cart checkout (multi-item) → Stripe
+   - Thank-you order summary
+   - Mobile nav toggle
 */
 
-// ---------- Utilities ----------
 const $ = (s, r=document) => r.querySelector(s);
 const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
-const fmt = (n) => `$${(Number(n)||0).toFixed(2)}`;
+
 function escapeHtml(s){
   return String(s || '').replace(/[&<>"']/g, (m) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -26,36 +29,26 @@ function toast(msg){
   setTimeout(()=> el.remove(), 2600);
 }
 
-// ---------- Cart store ----------
+/* ---------- Cart store ---------- */
 const CART_KEY = 'cart_v1';
 const LAST_ORDER_KEY = 'lastOrder';
 
-function loadCart(){
-  try { return JSON.parse(localStorage.getItem(CART_KEY) || '[]'); } catch { return []; }
-}
-function saveCart(items){
-  localStorage.setItem(CART_KEY, JSON.stringify(items || []));
-  updateCartBadge();
-}
-function clearCart(){
-  saveCart([]);
-  renderCart();
-}
+function loadCart(){ try { return JSON.parse(localStorage.getItem(CART_KEY) || '[]'); } catch { return []; } }
+function saveCart(items){ localStorage.setItem(CART_KEY, JSON.stringify(items || [])); updateCartBadge(); }
+function clearCart(){ saveCart([]); renderCart(); }
 function addToCart(item){
   const cart = loadCart();
   const i = cart.findIndex(x => x.price === item.price);
   if (i >= 0){ cart[i].quantity += item.quantity || 1; }
   else { cart.push({ price: item.price, name: item.name || 'Item', quantity: item.quantity || 1 }); }
-  saveCart(cart);
-  renderCart();
-  toast('Added to cart');
+  saveCart(cart); renderCart(); toast('Added to cart');
 }
 function updateCartBadge(){
   const count = loadCart().reduce((s, it)=> s + (it.quantity||0), 0);
   const badge = $('#cart-count'); if (badge) badge.textContent = String(count);
 }
 
-// ---------- Buy-Now Modal (injected) ----------
+/* ---------- Buy-Now Modal ---------- */
 function ensureBuyNowModal(){
   if ($('#bn-modal')) return;
   const wrap = document.createElement('div');
@@ -111,7 +104,7 @@ function hideBuyNowModal(){
   $('#bn-modal')?.removeAttribute('data-open');
 }
 
-// ---------- Cart Drawer UI ----------
+/* ---------- Cart Drawer UI ---------- */
 function openCart(){
   $('#cart-backdrop')?.setAttribute('aria-hidden', 'false');
   $('#cart-drawer')?.setAttribute('aria-hidden', 'false');
@@ -142,8 +135,8 @@ function renderCart(){
       list.appendChild(row);
     });
   }
-  $('#cart-item-count').textContent = String(items.reduce((s,i)=> s + (i.quantity||0), 0));
-  $$( '[data-remove]', list ).forEach(btn=>{
+  $('#cart-item-count')?.textContent = String(items.reduce((s,i)=> s + (i.quantity||0), 0));
+  $$('[data-remove]', list).forEach(btn=>{
     btn.addEventListener('click', (e)=>{
       const i = Number(e.currentTarget.getAttribute('data-remove'));
       const cart = loadCart(); cart.splice(i,1); saveCart(cart); renderCart();
@@ -151,7 +144,7 @@ function renderCart(){
   });
 }
 
-// ---------- Checkout helpers ----------
+/* ---------- Checkout helpers ---------- */
 async function postJSON(path, body){
   const r = await fetch(path, {
     method: 'POST',
@@ -162,17 +155,16 @@ async function postJSON(path, body){
   try { data = await r.json(); } catch { /* ignore */ }
   return { ok: r.ok, status: r.status, data };
 }
-
 function persistLastOrder({ items, deliveryDate, timeWindow, notes }){
   const payload = { items, deliveryDate, timeWindow, notes };
   localStorage.setItem(LAST_ORDER_KEY, JSON.stringify(payload));
 }
 
-// ---------- Event wiring ----------
+/* ---------- Event wiring ---------- */
 document.addEventListener('DOMContentLoaded', () => {
   updateCartBadge();
 
-  // Nav toggle (mobile)
+  // Mobile nav toggle
   const navToggle = $('.nav-toggle');
   if (navToggle){
     navToggle.addEventListener('click', ()=>{
@@ -195,13 +187,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!addBtn) return;
     const price = addBtn.getAttribute('data-price');
     const name  = addBtn.getAttribute('data-name') || 'Item';
-    if (!price){
-      toast('Missing price for this item.'); return;
-    }
+    if (!price){ toast('Missing price for this item.'); return; }
     addToCart({ price, name, quantity: 1 });
   });
 
-  // Buy-now (one item)
+  // Buy-now (one item) — handles one-time & subscription
   document.body.addEventListener('click', (e)=>{
     const bn = e.target.closest('[data-buy-now]');
     if (!bn) return;
@@ -209,28 +199,25 @@ document.addEventListener('DOMContentLoaded', () => {
     const price = bn.getAttribute('data-price');
     const name  = bn.getAttribute('data-name') || 'Item';
     const qty   = Number(bn.getAttribute('data-qty') || '1');
-    if (!price){
-      toast('Missing price for this item.'); return;
-    }
+    const mode  = (bn.getAttribute('data-mode') || 'payment').toLowerCase(); // 'payment' | 'subscription'
+    if (!price){ toast('Missing price for this item.'); return; }
 
     showBuyNowModal({ date: todayISO(), time: '', notes: '' });
 
-    // one-shot handler
     const go = $('#bn-go');
-    const handler = async () => {
+    // remove previous to avoid multiple binds
+    go.replaceWith(go.cloneNode(true));
+    $('#bn-go').addEventListener('click', async () => {
       const deliveryDate = $('#bn-date').value;
       const timeWindow   = $('#bn-time').value;
       const orderNotes   = $('#bn-notes').value || '';
-
-      if (!deliveryDate || !timeWindow){
-        toast('Please select date and time.'); return;
-      }
+      if (!deliveryDate || !timeWindow){ toast('Please select date and time.'); return; }
 
       const items = [{ price, quantity: qty }];
       persistLastOrder({ items: [{ name, quantity: qty }], deliveryDate, timeWindow, notes: orderNotes });
 
       const { ok, status, data } = await postJSON('/api/create-checkout-session', {
-        items, deliveryDate, timeWindow, orderNotes
+        mode, items, deliveryDate, timeWindow, orderNotes
       });
       if (!ok){
         console.error('Checkout failed', status, data);
@@ -238,6 +225,8 @@ document.addEventListener('DOMContentLoaded', () => {
           toast('That window is full. Please pick another.');
         } else if (data && data.error === 'missing_fields'){
           toast('Missing fields. Please reselect date & time.');
+        } else if (data && data.error === 'subscription_not_allowed'){
+          toast('Subscription setup unavailable. Please try again later.');
         } else {
           toast(`Checkout failed ${status}`);
         }
@@ -245,25 +234,19 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       hideBuyNowModal();
       if (data && data.url) location.href = data.url;
-    };
-
-    // remove previous to avoid multiple binds
-    go.replaceWith(go.cloneNode(true));
-    $('#bn-go').addEventListener('click', handler, { once: true });
+    }, { once: true });
   });
 
-  // Cart checkout (multi-item)
+  // Cart checkout (multi-item, one-time)
   $('#cart-checkout')?.addEventListener('click', async ()=>{
     const cart = loadCart();
     if (!cart.length){ toast('Your cart is empty'); return; }
 
     const deliveryDate = $('#delivery-date')?.value || '';
     const timeWindow   = $('#delivery-time')?.value || '';
-    const orderNotes   = $('#bn-notes') ? $('#bn-notes').value : ''; // carry if present
+    const orderNotes   = $('#bn-notes') ? $('#bn-notes').value : '';
 
-    if (!deliveryDate || !timeWindow){
-      toast('Please select delivery date and time.'); return;
-    }
+    if (!deliveryDate || !timeWindow){ toast('Please select delivery date and time.'); return; }
 
     const items = cart.map(it => ({ price: it.price, quantity: it.quantity || 1 }));
     persistLastOrder({
@@ -272,7 +255,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     const { ok, status, data } = await postJSON('/api/create-checkout-session', {
-      items, deliveryDate, timeWindow, orderNotes
+      mode: 'payment', items, deliveryDate, timeWindow, orderNotes
     });
     if (!ok){
       console.error('Checkout failed', status, data);
@@ -288,7 +271,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (data && data.url) location.href = data.url;
   });
 
-  // Thank-you page summary
+  // Thank-you summary
   if (location.pathname.endsWith('/thank-you.html') || location.pathname.endsWith('thank-you.html')){
     renderThankYou();
   }
@@ -297,7 +280,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const y = $('#y'); if (y) y.textContent = String(new Date().getFullYear());
 });
 
-// ---------- Thank-you summary ----------
+/* ---------- Thank-you summary ---------- */
 async function renderThankYou(){
   const box = $('#order-summary');
   if (!box) return;
