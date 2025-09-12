@@ -143,6 +143,74 @@ const $deliveryDate = $('#delivery-date');
 const $deliveryTime = $('#delivery-time');
 const $orderNotes = $('#order-notes');
 
+/* ---- Delivery date default + slot availability ---- */
+function fmtDateInput(d){
+  const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), dd = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${dd}`;
+}
+function addDays(d, n){ const x = new Date(d); x.setDate(x.getDate()+n); x.setHours(0,0,0,0); return x; }
+function computeDefaultDeliveryDate(now=new Date()){
+  const cutoffH = 20, cutoffM = 30; // 8:30 PM
+  const afterCutoff = (now.getHours()>cutoffH) || (now.getHours()===cutoffH && now.getMinutes()>=cutoffM);
+  return addDays(now, afterCutoff ? 2 : 1);
+}
+async function fetchAvailability(date){
+  const r = await fetch(`/api/slot-availability?date=${encodeURIComponent(date)}`);
+  if (!r.ok) throw new Error('avail_fetch');
+  return await r.json();
+}
+function normalizeAvailability(data){
+  const map = new Map();
+  if (!data) return map;
+  // Supports { windows: { "6:00–7:00 AM": {capacity,current,available}, ... } } OR array
+  if (Array.isArray(data.windows)){
+    for (const w of data.windows){
+      const label = w.window || w.label || w.name;
+      const avail = Number(w.available ?? (Number(w.capacity||0) - Number(w.current||0)));
+      if (label) map.set(label, Math.max(0, isNaN(avail) ? 0 : avail));
+    }
+  } else if (data.windows && typeof data.windows === 'object'){
+    for (const [label, v] of Object.entries(data.windows)){
+      const raw = (v && (v.available ?? (v.capacity - v.current)));
+      const avail = Number.isFinite(raw) ? Number(raw) : 0;
+      map.set(label, Math.max(0, avail));
+    }
+  }
+  return map;
+}
+function requestedQty(){
+  return cart.reduce((s,i)=> s + (parseInt(i.quantity||0,10) || 0), 0) || 1;
+}
+async function refreshAvailability(){
+  if (!$deliveryTime || !$deliveryDate) return;
+  const date = $deliveryDate.value;
+  if (!date) return;
+  try{
+    const data = await fetchAvailability(date);
+    const map = normalizeAvailability(data);
+    const need = requestedQty();
+
+    Array.from($deliveryTime.options).forEach(opt => {
+      if (!opt.value) return; // skip placeholder
+      const base = opt.textContent.trim().replace(/\s+—.*$/, ''); // strip any old suffix
+      const avail = map.has(base) ? map.get(base) : null;
+      if (avail != null){
+        const isFullForUs = avail < need;
+        opt.disabled = isFullForUs;
+        opt.textContent = isFullForUs ? `${base} — Full` : `${base}${avail>=0 ? ` — ${avail} left` : ''}`;
+      } else {
+        opt.disabled = false; // unknown window -> assume ok
+        opt.textContent = base;
+      }
+    });
+    // If current selection is disabled, clear it
+    const sel = $deliveryTime.selectedOptions[0];
+    if (sel && sel.disabled) $deliveryTime.value = '';
+  } catch(e){
+    // Availability fetch failed; leave options as-is
+  }
+}
+
 function updateCartBadge(){
   const total = cartItemsTotal();
   if ($cartBadge) $cartBadge.textContent = String(total);
@@ -156,6 +224,8 @@ function openCart(){
   // Lock page scroll while drawer is open (prevents background overlap/jank on mobile)
   document.documentElement.style.overflow = 'hidden';
   document.body.style.overflow = 'hidden';
+  // Ensure options reflect current capacity when user opens the cart
+  refreshAvailability();
 }
 function closeCart(){
   if (!$cartDrawer) return;
@@ -223,6 +293,8 @@ function renderCart(){
     }
   }
   updateCartBadge();
+  // Re-evaluate which windows are selectable based on current cart qty
+  refreshAvailability();
 }
 on($cartClear, 'click', () => {
   cart = [];
@@ -447,6 +519,17 @@ if ($voteForm){
   updateCartBadge();
   initProductButtons();
   renderThankYou();
+
+  // Prefill date (next day before 8:30 PM; else day after) + min date
+  if ($deliveryDate){
+    const def = computeDefaultDeliveryDate();
+    const defStr = fmtDateInput(def);
+    if (!$deliveryDate.value) $deliveryDate.value = defStr;
+    $deliveryDate.min = defStr;
+    on($deliveryDate, 'change', () => { refreshAvailability(); });
+  }
+  // Initial availability check
+  refreshAvailability();
 
   // Muffin tapper (if present on this page)
   const $tapper = $('#muffin-tapper');

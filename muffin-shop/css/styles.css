@@ -366,3 +366,5 @@ button, .btn { touch-action: manipulation; }
 #cart-backdrop{ touch-action: none; }
 .product .buy .btn{ position:relative; z-index:2; }
 .product.card{ overflow:hidden; }
+/* Disabled delivery windows appear dim */
+#delivery-time option[disabled]{ color:#a0a4aa; }
