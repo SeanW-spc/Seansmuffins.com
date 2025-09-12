@@ -74,7 +74,11 @@ function toast(msg, ms=2200){
   toastHost.textContent = msg;
   toastHost.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(()=> toastHost.classList.remove('show'), ms);
+  toastTimer = setTimeout(()=>{
+    toastHost.classList.remove('show');
+    // Clear text so message fully disappears even if CSS keeps container visible
+    toastHost.textContent = '';
+  }, ms);
 }
 
 /* ============ Cart state ============ */
@@ -176,10 +180,10 @@ function renderCart(){
       cart.forEach((item, idx) => {
         const div = document.createElement('div');
         div.className = 'cart-item';
+        // Hide the Stripe price ID in the UI (only show item name + qty controls)
         div.innerHTML = `
           <div class="ci-info">
             <div class="ci-name">${item.name || 'Item'}</div>
-            <div class="ci-meta">${item.price}</div>
           </div>
           <div class="ci-qty">
             <button class="qty dec" aria-label="Decrease">−</button>
@@ -339,7 +343,8 @@ on($cartCheckout, 'click', async () => {
         invalid_date: 'Please choose a valid delivery date.',
         subscription_disabled: 'Subscriptions are coming soon.',
         method_not_allowed: 'Please refresh and try again.',
-        airtable_auth: 'Server auth issue. Try again in a minute.'
+        airtable_auth: 'Server auth issue. Try again in a minute.',
+        stripe_error: 'Stripe error. Please try again.'
       };
       toast(map[errCode] || 'Checkout failed. Please try again.');
       return;
@@ -433,4 +438,23 @@ if ($voteForm){
   updateCartBadge();
   initProductButtons();
   renderThankYou();
+
+  // Muffin tapper (if present on this page)
+  const $tapper = $('#muffin-tapper');
+  if ($tapper){
+    const $cnt = $('.mt-count', $tapper);
+    let n = parseInt(($cnt?.textContent || '0'), 10) || 0;
+    const tap = () => {
+      n += 1;
+      if ($cnt) $cnt.textContent = String(n);
+      $tapper.classList.add('pop');
+      setTimeout(()=> $tapper.classList.remove('pop'), 160);
+    };
+    $tapper.addEventListener('touchend', tap, { passive:true });
+    $tapper.addEventListener('click', (e)=> {
+      // ignore ghost click after touch
+      if (e.detail === 0) return;
+      tap();
+    });
+  }
 })();
