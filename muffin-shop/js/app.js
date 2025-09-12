@@ -181,6 +181,20 @@ function normalizeAvailability(data){
 function requestedQty(){
   return cart.reduce((s,i)=> s + (parseInt(i.quantity||0,10) || 0), 0) || 1;
 }
+
+/* NEW: keep stable values for <option> and remember original labels */
+function setupTimeOptions(){
+  if (!$deliveryTime) return;
+  Array.from($deliveryTime.options).forEach(opt => {
+    const label = (opt.textContent || '').trim();
+    if (!opt.dataset.base) opt.dataset.base = label;          // remember original label
+    if (!opt.hasAttribute('value') && label && opt.value === '') {
+      // only set if the option had no explicit value; skip placeholder with value=""
+      opt.value = label;
+    }
+  });
+}
+
 async function refreshAvailability(){
   if (!$deliveryTime || !$deliveryDate) return;
   const date = $deliveryDate.value;
@@ -192,7 +206,7 @@ async function refreshAvailability(){
 
     Array.from($deliveryTime.options).forEach(opt => {
       if (!opt.value) return; // skip placeholder
-      const base = opt.textContent.trim().replace(/\s+—.*$/, ''); // strip any old suffix
+      const base = (opt.dataset.base || opt.value || opt.textContent).trim(); // <-- stable base
       const avail = map.has(base) ? map.get(base) : null;
       if (avail != null){
         const isFullForUs = avail < need;
@@ -225,6 +239,7 @@ function openCart(){
   document.documentElement.style.overflow = 'hidden';
   document.body.style.overflow = 'hidden';
   // Ensure options reflect current capacity when user opens the cart
+  setupTimeOptions();
   refreshAvailability();
 }
 function closeCart(){
@@ -528,7 +543,9 @@ if ($voteForm){
     $deliveryDate.min = defStr;
     on($deliveryDate, 'change', () => { refreshAvailability(); });
   }
-  // Initial availability check
+
+  // Ensure stable option values and run first availability check
+  setupTimeOptions();
   refreshAvailability();
 
   // Muffin tapper (if present on this page)
