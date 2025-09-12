@@ -1,9 +1,14 @@
 // api/create-checkout-session.js
 // Checks capacity (incl. SlotCaps override), holds a slot, then creates a Stripe Checkout Session.
-// Launch setting: subscriptions disabled. Returns clear JSON errors to the client.
+// Launch: subscriptions disabled. Clear JSON errors; soft-fail Slots write when configured.
 
 import Stripe from 'stripe';
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? '', { apiVersion: '2024-06-20' });
+const stripeKey = process.env.STRIPE_SECRET_KEY ?? '';
+const stripe = new Stripe(stripeKey, { apiVersion: '2024-06-20' });
+
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.seansmuffins.com';
+// If true, continue to Stripe even if the Slots "pending" reservation fails.
+const SOFT_RES = process.env.SOFT_RESERVATIONS === '1' || !process.env.AIRTABLE_API_KEY || !process.env.AIRTABLE_BASE_ID;
 
 export default async function handler(req, res) {
   try {
@@ -12,24 +17,26 @@ export default async function handler(req, res) {
       return res.status(405).json({ error: 'method_not_allowed' });
     }
 
+    // Config sanity
+    if (!stripeKey || !stripeKey.startsWith('sk_')) {
+      return res.status(500).json({ error: 'stripe_config' });
+    }
+
     const { mode = 'payment', items, deliveryDate, timeWindow, orderNotes } = (await readJson(req)) || {};
 
-    // ---- Basic validation ----
+    // ---- Validation ----
     if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'missing_fields' });
 
-    // Disable subscriptions for launch
     const m = String(mode || 'payment').toLowerCase();
     if (m === 'subscription') return res.status(403).json({ error: 'subscription_disabled' });
     if (m !== 'payment') return res.status(400).json({ error: 'invalid_mode' });
 
-    // Validate item shapes
     for (const it of items) {
       if (!it || typeof it.price !== 'string' || !it.price) {
         return res.status(400).json({ error: 'missing_price' });
       }
     }
 
-    // Validate window + date early to avoid 500s
     if (!getWindows().includes(timeWindow)) {
       return res.status(400).json({ error: 'invalid_window' });
     }
@@ -47,31 +54,37 @@ export default async function handler(req, res) {
       return res.status(409).json({ error: 'window_full', capacity, current, suggestions });
     }
 
-    // ---- Create pending reservation in Slots (expires after 60 minutes) ----
-    const reservationId = await createPendingReservation(deliveryDate, timeWindow, totalQty);
+    // ---- Pending reservation in Slots (best effort) ----
+    let reservationId = '';
+    try {
+      reservationId = await createPendingReservation(deliveryDate, timeWindow, totalQty);
+    } catch (err) {
+      console.error('Slots pending create threw:', err);
+    }
     if (!reservationId) {
-      // Best-effort error: if Airtable is misconfigured, signal a server issue
-      return res.status(502).json({ error: 'slots_reservation_failed' });
+      if (SOFT_RES) {
+        reservationId = `noop_${Date.now().toString(36)}`;
+        console.warn('Slots reservation failed; proceeding due to SOFT_RESERVATIONS.');
+      } else {
+        return res.status(502).json({ error: 'slots_reservation_failed' });
+      }
     }
 
     // ---- Stripe Checkout Session ----
-    const successUrlBase = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.seansmuffins.com';
-
     let session;
     try {
       session = await stripe.checkout.sessions.create({
-        mode: m, // 'payment' only (subs disabled)
+        mode: m,
         line_items: items.map(i => ({ price: i.price, quantity: i.quantity || 1 })),
         allow_promotion_codes: true,
-        success_url: `${successUrlBase}/thank-you.html?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${successUrlBase}/`,
+        success_url: `${SITE_URL}/thank-you.html?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${SITE_URL}/`,
         metadata: {
           deliveryDate,
           timeWindow,
           reservationId,
           order_notes: String(orderNotes || '').slice(0, 500)
         },
-        // Optional field on the Stripe page
         custom_fields: [
           {
             key: 'order_notes',
@@ -82,7 +95,7 @@ export default async function handler(req, res) {
         ]
       });
     } catch (err) {
-      // Try to free the hold if Stripe failed
+      // Try to free the hold if we actually created one
       try { await cancelReservation(reservationId); } catch {}
       const msg = String(err?.message || '').toLowerCase();
       if (msg.includes('no such price')) return res.status(400).json({ error: 'invalid_price' });
@@ -94,21 +107,16 @@ export default async function handler(req, res) {
     return res.status(200).json({ id: session.id, url: session.url });
   } catch (e) {
     console.error('create-checkout-session error', e);
-    if (String(e?.message || '').includes('recurring') && String(e?.message || '').includes('mode')) {
-      return res.status(400).json({ error: 'subscription_not_allowed' });
-    }
     return res.status(500).json({ error: 'server_error' });
   }
 }
 
 /* ------------ Helpers ------------ */
 
-// Robust body reader for Vercel Node (no Next.js req.json())
+// Body reader for Vercel/Node
 async function readJson(req) {
   if (req.body) {
-    if (typeof req.body === 'string') {
-      try { return JSON.parse(req.body); } catch { return {}; }
-    }
+    if (typeof req.body === 'string') { try { return JSON.parse(req.body); } catch { return {}; } }
     if (typeof req.body === 'object') return req.body;
   }
   let body = '';
@@ -119,7 +127,7 @@ async function readJson(req) {
   try { return JSON.parse(body || '{}'); } catch { return {}; }
 }
 
-// Delivery windows (keep in sync with site + Airtable options)
+// Keep in sync with site & Airtable
 function getWindows() {
   return ['6:00–7:00 AM', '7:00–8:00 AM', '8:00–9:00 AM'];
 }
@@ -127,13 +135,13 @@ function getWindows() {
 async function resolveCapacity(date, win) {
   const defCap = Number(process.env.SLOT_CAPACITY_DEFAULT || 12);
   const base = process.env.AIRTABLE_BASE_ID;
+  const key = process.env.AIRTABLE_API_KEY;
   const table = encodeURIComponent(process.env.AIRTABLE_TABLE_SLOT_CAPS || 'SlotCaps');
-  if (!base || !process.env.AIRTABLE_API_KEY) return defCap;
+  if (!base || !key) return defCap;
 
-  const url = `https://api.airtable.com/v0/${base}/${table}`;
-  const u = new URL(url);
+  const u = new URL(`https://api.airtable.com/v0/${base}/${table}`);
   u.searchParams.set('filterByFormula', `AND({Date}='${date}', {Window}='${win}')`);
-  const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } });
+  const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${key}` } });
   if (!r.ok) return defCap;
   const j = await r.json();
   const rec = (j.records || [])[0];
@@ -144,12 +152,12 @@ async function resolveCapacity(date, win) {
 
 async function countOccupied(date, win) {
   const base = process.env.AIRTABLE_BASE_ID;
-  const apiKey = process.env.AIRTABLE_API_KEY;
-  if (!base || !apiKey) return 0; // No Airtable: treat as empty (soft-fail)
+  const key = process.env.AIRTABLE_API_KEY;
+  if (!base || !key) return 0; // Soft-fail: treat as empty if Airtable not configured
+
   const table = encodeURIComponent(process.env.AIRTABLE_TABLE_SLOTS || 'Slots');
-  const url = `https://api.airtable.com/v0/${base}/${table}`;
-  const u = new URL(url);
-  const cutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // 60 min holds still count
+  const u = new URL(`https://api.airtable.com/v0/${base}/${table}`);
+  const cutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // 60-min holds count
   const formula = `AND({Date}='${date}', {Window}='${win}', OR({Status}='confirmed', AND({Status}='pending', IS_AFTER({Updated}, '${cutoff}'))))`;
   u.searchParams.set('filterByFormula', formula);
   u.searchParams.set('pageSize', '100');
@@ -157,7 +165,7 @@ async function countOccupied(date, win) {
   let offset = null, count = 0;
   do {
     if (offset) u.searchParams.set('offset', offset);
-    const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${apiKey}` } });
+    const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${key}` } });
     if (!r.ok) break;
     const j = await r.json();
     count += (j.records || []).reduce((s, rec) => s + Number(rec.fields?.Items || 1), 0);
@@ -168,18 +176,17 @@ async function countOccupied(date, win) {
 
 async function createPendingReservation(date, win, qty) {
   const base = process.env.AIRTABLE_BASE_ID;
-  const apiKey = process.env.AIRTABLE_API_KEY;
+  const key = process.env.AIRTABLE_API_KEY;
   const table = encodeURIComponent(process.env.AIRTABLE_TABLE_SLOTS || 'Slots');
 
-  // Gracefully no-op if Airtable isn’t configured yet (don’t block checkout)
-  if (!base || !apiKey) return `noop_${Date.now().toString(36)}`;
+  if (!base || !key) return ''; // let SOFT_RES decide
 
   const url = `https://api.airtable.com/v0/${base}/${table}`;
   const reservationId = Math.random().toString(36).slice(2) + Date.now().toString(36);
   const r = await fetch(url, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${key}`,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
@@ -196,41 +203,34 @@ async function createPendingReservation(date, win, qty) {
     })
   });
   if (!r.ok) {
-    console.error('Slots pending create failed', await r.text().catch(() => ''));
+    console.error('Slots pending create failed', await safeText(r));
     return '';
   }
   return reservationId;
 }
 
 async function cancelReservation(reservationId) {
-  if (!reservationId || reservationId.startsWith('noop_')) return; // local/no-op hold
+  if (!reservationId || reservationId.startsWith('noop_')) return;
   const base = process.env.AIRTABLE_BASE_ID;
-  const apiKey = process.env.AIRTABLE_API_KEY;
-  if (!base || !apiKey) return;
+  const key = process.env.AIRTABLE_API_KEY;
+  if (!base || !key) return;
   const table = encodeURIComponent(process.env.AIRTABLE_TABLE_SLOTS || 'Slots');
 
-  // Look up the record by ReservationId
+  // Lookup by ReservationId
   const listUrl = new URL(`https://api.airtable.com/v0/${base}/${table}`);
   listUrl.searchParams.set('filterByFormula', `AND({ReservationId}='${reservationId}', {Status}='pending')`);
-  const listRes = await fetch(listUrl.toString(), { headers: { Authorization: `Bearer ${apiKey}` } });
+  const listRes = await fetch(listUrl.toString(), { headers: { Authorization: `Bearer ${key}` } });
   if (!listRes.ok) return;
   const data = await listRes.json();
   const rec = (data.records || [])[0];
   if (!rec?.id) return;
 
   // Patch to canceled
-  const patchUrl = `https://api.airtable.com/v0/${base}/${table}`;
-  await fetch(patchUrl, {
+  await fetch(`https://api.airtable.com/v0/${base}/${table}`, {
     method: 'PATCH',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json'
-    },
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      records: [{
-        id: rec.id,
-        fields: { Status: 'canceled', Updated: new Date().toISOString() }
-      }]
+      records: [{ id: rec.id, fields: { Status: 'canceled', Updated: new Date().toISOString() } }]
     })
   }).catch(()=>{});
 }
@@ -242,7 +242,11 @@ async function findAlternativeWindows(date, currentWin, qtyNeeded) {
     const cap = await resolveCapacity(date, w);
     const cur = await countOccupied(date, w);
     if (cur + (Number(qtyNeeded) || 1) <= cap) out.push(w);
-    if (out.length >= 3) break; // limit suggestions
+    if (out.length >= 3) break;
   }
   return out;
+}
+
+async function safeText(r){
+  try { return await r.text(); } catch { return ''; }
 }
