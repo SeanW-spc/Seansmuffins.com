@@ -150,6 +150,9 @@ function openCart(){
   $cartDrawer.setAttribute('aria-hidden','false');
   $cartDrawer.classList.add('open');
   if ($cartBackdrop) $cartBackdrop.classList.add('show');
+  // Lock page scroll while drawer is open (prevents background overlap/jank on mobile)
+  document.documentElement.style.overflow = 'hidden';
+  document.body.style.overflow = 'hidden';
 }
 function closeCart(){
   if (!$cartDrawer) return;
@@ -225,14 +228,21 @@ on($cartClear, 'click', () => {
 });
 
 /* ============ Product buttons ============ */
+/* Touch+click helper that avoids “ghost click” double-fires on mobile */
+let _lastTouchTs = 0;
+window.addEventListener('touchend', () => { _lastTouchTs = Date.now(); }, true);
 function onTap(el, handler){
   if (!el) return;
-  const hasPointer = 'onpointerup' in window;
-  if (hasPointer){
-    el.addEventListener('pointerup', (e)=>{ if (e.pointerType !== 'mouse') e.preventDefault(); handler(e); }, { passive:true });
-  }
-  el.addEventListener('click', handler);
+  el.addEventListener('touchend', (e) => {
+    _lastTouchTs = Date.now();
+    handler(e);
+  }, { passive: true });
+  el.addEventListener('click', (e) => {
+    if (Date.now() - _lastTouchTs < 500) { e.preventDefault(); return; } // ignore ghost-click
+    handler(e);
+  });
 }
+
 function initProductButtons(){
   // Add-to-cart
   $$('[data-add]').forEach(btn => {
@@ -276,6 +286,7 @@ function initProductButtons(){
     });
   });
 }
+
 /* ============ Checkout ============ */
 async function createCheckoutSession(payload){
   const resp = await fetch('/api/create-checkout-session', {
@@ -358,6 +369,7 @@ on($cartCheckout, 'click', async () => {
     toast(map[msg] || 'Checkout failed. Please try again.');
   }
 });
+
 /* ============ Thank-you hydration (optional) ============ */
 function renderThankYou(){
   const host = $('#thank-you-summary');
