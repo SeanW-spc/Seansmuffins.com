@@ -76,7 +76,6 @@ function toast(msg, ms=2200){
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=>{
     toastHost.classList.remove('show');
-    // Clear text so message fully disappears even if CSS keeps container visible
     toastHost.textContent = '';
   }, ms);
 }
@@ -336,6 +335,7 @@ on($cartCheckout, 'click', async () => {
     if (!resp.ok){
       let errCode = 'checkout_failed';
       try { const j = await resp.json(); errCode = j?.error || errCode; } catch {}
+
       const map = {
         window_full: 'That delivery window is full. Please pick another window.',
         capacity_full: 'That delivery window is full. Please pick another window.',
@@ -343,9 +343,14 @@ on($cartCheckout, 'click', async () => {
         invalid_date: 'Please choose a valid delivery date.',
         subscription_disabled: 'Subscriptions are coming soon.',
         method_not_allowed: 'Please refresh and try again.',
-        airtable_auth: 'Server auth issue. Try again in a minute.',
-        stripe_error: 'Stripe error. Please try again.'
+        missing_fields: 'Please refresh and try again.',
+        invalid_price: 'That item is unavailable. Please refresh and try again.',
+        stripe_key_mismatch: 'Payment system mode mismatch. Please try again shortly.',
+        stripe_config: 'Payment system is being configured. Please try again shortly.',
+        stripe_error: 'Payment processor error. Please try again.',
+        slots_reservation_failed: 'Could not hold your delivery slot. Please try again in 30 seconds.'
       };
+
       toast(map[errCode] || 'Checkout failed. Please try again.');
       return;
     }
@@ -369,7 +374,11 @@ on($cartCheckout, 'click', async () => {
     console.error('Checkout error', e);
     const msg = (e && e.message) ? e.message : '';
     const map = {
-      subscription_disabled: 'Subscriptions are coming soon.'
+      subscription_disabled: 'Subscriptions are coming soon.',
+      invalid_price: 'That item is unavailable. Please refresh and try again.',
+      stripe_key_mismatch: 'Payment system mode mismatch. Please try again shortly.',
+      stripe_config: 'Payment system is being configured. Please try again shortly.',
+      stripe_error: 'Payment processor error. Please try again.'
     };
     toast(map[msg] || 'Checkout failed. Please try again.');
   }
