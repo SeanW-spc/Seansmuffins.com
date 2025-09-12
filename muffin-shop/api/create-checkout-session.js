@@ -45,14 +45,56 @@ export default async function handler(req, res) {
     }
 
     // ---- Capacity check by total quantity ----
-    const totalQty = items.reduce((s, i) => s + (Number(i.quantity) || 0), 0) || 1;
-    const capacity = await resolveCapacity(deliveryDate, timeWindow);
-    const current = await countOccupied(deliveryDate, timeWindow);
+    // ---- Capacity check by total quantity (REPLACE with driver-aware) ----
+const qtyNeeded = Array.isArray(items) ? items.reduce((n, it)=> n + Number(it?.quantity || 1), 0) : 1;
 
-    if (current + totalQty > capacity) {
-      const suggestions = await findAlternativeWindows(deliveryDate, timeWindow, totalQty);
-      return res.status(409).json({ error: 'window_full', capacity, current, suggestions });
-    }
+// Total window capacity (existing logic)
+const cap = await resolveCapacity(deliveryDate, timeWindow);
+const cur = await countOccupied(deliveryDate, timeWindow);
+if (cur + qtyNeeded > cap) {
+  const suggestions = await suggestAlternateWindows(deliveryDate, timeWindow, qtyNeeded);
+  return res.status(409).json({ error:'window_full', suggestions });
+}
+
+// NEW: per-driver enforcement & assignment (if DriverCaps exist)
+const pick = await pickDriver(deliveryDate, timeWindow, qtyNeeded);
+if (pick.enforced && !pick.driver) {
+  // all drivers full for this window even if total cap says otherwise
+  const suggestions = await suggestAlternateWindows(deliveryDate, timeWindow, qtyNeeded);
+  return res.status(409).json({ error:'driver_full', suggestions });
+}
+const chosenDriver = pick.driver || null;
+
+// --- UPDATE: writePendingReservation now stores Driver field when provided ---
+async function writePendingReservation({ date, window, qty, reservationId, driver }){
+  try{
+    if (!process.env.AIRTABLE_API_KEY || !process.env.AIRTABLE_BASE_ID) return;
+    const key = process.env.AIRTABLE_API_KEY;
+    const base= process.env.AIRTABLE_BASE_ID;
+    const table= process.env.AIRTABLE_TABLE_SLOTS || 'Slots';
+    const u = `https://api.airtable.com/v0/${base}/${encodeURIComponent(table)}`;
+    const fields = {
+      Date: date,
+      Window: window,
+      Status: 'pending',
+      Items: Number(qty || 1),
+      ReservationId: reservationId,
+      Updated: new Date().toISOString()
+    };
+    if (driver) fields.Driver = driver;
+    await fetch(u, {
+      method:'POST',
+      headers:{ 'Authorization': 'Bearer ' + key, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields })
+    });
+  } catch (e) {
+    if (process.env.SOFT_RESERVATIONS === '1') return; // ignore if you’ve enabled soft reservations
+    throw e;
+  }
+}
+
+
+// (then continue to create the Stripe Checkout Session… include driver in metadata if you like)
 
     // ---- Pending reservation in Slots (best effort) ----
     let reservationId = '';
@@ -112,6 +154,66 @@ export default async function handler(req, res) {
 }
 
 /* ------------ Helpers ------------ */
+
+// --- NEW: pick a driver with remaining capacity for (date, timeWindow, qtyNeeded)
+async function pickDriver(date, window, qtyNeeded){
+  const key = process.env.AIRTABLE_API_KEY, base = process.env.AIRTABLE_BASE_ID;
+  if (!key || !base) return { driver: null, enforced: false }; // no Airtable → skip per-driver
+  const driverCapsTable = process.env.AIRTABLE_TABLE_DRIVER_CAPS || 'DriverCaps';
+  const slotsTable = process.env.AIRTABLE_TABLE_SLOTS || 'Slots';
+
+  // 1) load per-driver caps
+  const f = encodeURIComponent(`AND({Date}='${date}',{Window}='${window}')`);
+  const url = `https://api.airtable.com/v0/${base}/${encodeURIComponent(driverCapsTable)}?filterByFormula=${f}&pageSize=100`;
+  const capsRes = await fetch(url, { headers:{ Authorization:'Bearer ' + key } });
+  if (!capsRes.ok) return { driver: null, enforced: false };
+  const capsJson = await capsRes.json();
+  const caps = {};
+  for (const rec of (capsJson.records || [])){
+    const d = String(rec.fields?.Driver || '').trim();
+    const c = Number(rec.fields?.Capacity || 0);
+    if (d) caps[d] = (Number.isFinite(c) ? c : 0);
+  }
+  const drivers = Object.keys(caps);
+  if (!drivers.length) return { driver: null, enforced: false }; // no per-driver caps configured
+
+  // 2) load current usage per driver (pending fresh + confirmed; ignore AdminHold)
+  const sinceIso = new Date(Date.now() - (Number(process.env.PENDING_FRESH_MIN || 60))*60*1000).toISOString();
+  const filter = [
+    `{Date}='${date}'`,
+    `{Window}='${window}'`,
+    `OR({Status}='confirmed', AND({Status}='pending', IS_AFTER({Updated}, '${sinceIso}')))`,
+    'NOT({AdminHold}=1)'
+  ].join(',');
+  const formula = `AND(${filter})`;
+  let offset, usage = {};
+  do{
+    const u = new URL(`https://api.airtable.com/v0/${base}/${encodeURIComponent(slotsTable)}`);
+    u.searchParams.set('filterByFormula', formula);
+    u.searchParams.set('pageSize','100');
+    if (offset) u.searchParams.set('offset', offset);
+    const r = await fetch(u.toString(), { headers:{ Authorization:'Bearer ' + key }});
+    if (!r.ok) break;
+    const j = await r.json();
+    for (const rec of (j.records || [])){
+      const f = rec.fields || {};
+      const n = Number(f.Items || 0); if (!Number.isFinite(n)) continue;
+      const drv = String(f.Driver || '').trim() || '(unassigned)';
+      usage[drv] = (usage[drv] || 0) + n;
+    }
+    offset = j.offset;
+  } while (offset);
+
+  // 3) choose driver with remaining >= qtyNeeded, smallest current load
+  let best = null, bestLoad = Infinity;
+  for (const d of drivers){
+    const remain = (caps[d] || 0) - (usage[d] || 0);
+    if (remain >= qtyNeeded && (usage[d]||0) < bestLoad){
+      best = d; bestLoad = (usage[d]||0);
+    }
+  }
+  return { driver: best, enforced: true };
+}
 
 // Body reader for Vercel/Node
 async function readJson(req) {
