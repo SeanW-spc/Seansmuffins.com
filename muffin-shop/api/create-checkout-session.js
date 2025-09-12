@@ -1,6 +1,6 @@
 // api/create-checkout-session.js
-// Checks capacity (incl. SlotCaps override), holds a slot, then creates a Stripe Checkout Session.
-// Launch: subscriptions disabled. Clear JSON errors; soft-fail Slots write when configured.
+// Checks capacity (incl. SlotCaps override), optionally enforces per-driver caps,
+// holds a slot, then creates a Stripe Checkout Session.
 
 import Stripe from 'stripe';
 const stripeKey = process.env.STRIPE_SECRET_KEY ?? '';
@@ -8,7 +8,10 @@ const stripe = new Stripe(stripeKey, { apiVersion: '2024-06-20' });
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.seansmuffins.com';
 // If true, continue to Stripe even if the Slots "pending" reservation fails.
-const SOFT_RES = process.env.SOFT_RESERVATIONS === '1' || !process.env.AIRTABLE_API_KEY || !process.env.AIRTABLE_BASE_ID;
+const SOFT_RES =
+  process.env.SOFT_RESERVATIONS === '1' ||
+  !process.env.AIRTABLE_API_KEY ||
+  !process.env.AIRTABLE_BASE_ID;
 
 export default async function handler(req, res) {
   try {
@@ -22,84 +25,83 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'stripe_config' });
     }
 
-    const { mode = 'payment', items, deliveryDate, timeWindow, orderNotes } = (await readJson(req)) || {};
+    // ---------- Body + field normalization ----------
+    const body = (await readJson(req)) || {};
+    const modeRaw = String(body.mode || 'payment').toLowerCase();
 
-    // ---- Validation ----
-    if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'missing_fields' });
+    // Accept BOTH camelCase and snake_case from client
+    const items = body.items;
+    const rawDeliveryDate =
+      body.deliveryDate ?? body.delivery_date ?? body.delivery ?? '';
+    const rawWindow =
+      body.timeWindow ?? body.preferred_window ?? body.preferredWindow ?? '';
 
-    const m = String(mode || 'payment').toLowerCase();
-    if (m === 'subscription') return res.status(403).json({ error: 'subscription_disabled' });
-    if (m !== 'payment') return res.status(400).json({ error: 'invalid_mode' });
+    const timeWindow = normalizeWindow(rawWindow); // -> one of getWindows() or ''
+    const deliveryDate = String(rawDeliveryDate || '');
 
+    // ---------- Validation ----------
+    if (!Array.isArray(items) || !items.length) {
+      return res.status(400).json({ error: 'missing_fields' });
+    }
+    if (modeRaw === 'subscription') {
+      return res.status(403).json({ error: 'subscription_disabled' });
+    }
+    if (modeRaw !== 'payment') {
+      return res.status(400).json({ error: 'invalid_mode' });
+    }
     for (const it of items) {
       if (!it || typeof it.price !== 'string' || !it.price) {
         return res.status(400).json({ error: 'missing_price' });
       }
     }
 
-    if (!getWindows().includes(timeWindow)) {
+    if (!timeWindow || !getWindows().includes(timeWindow)) {
+      // This is the 400 you were seeing as "please choose a delivery window"
       return res.status(400).json({ error: 'invalid_window' });
     }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(deliveryDate || ''))) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(deliveryDate)) {
       return res.status(400).json({ error: 'invalid_date' });
     }
 
-    // ---- Capacity check by total quantity ----
-    // ---- Capacity check by total quantity (REPLACE with driver-aware) ----
-const qtyNeeded = Array.isArray(items) ? items.reduce((n, it)=> n + Number(it?.quantity || 1), 0) : 1;
+    // ---------- Capacity check by total quantity (driver-aware) ----------
+    const qtyNeeded = Array.isArray(items)
+      ? items.reduce((n, it) => n + Number(it?.quantity || 1), 0)
+      : 1;
 
-// Total window capacity (existing logic)
-const cap = await resolveCapacity(deliveryDate, timeWindow);
-const cur = await countOccupied(deliveryDate, timeWindow);
-if (cur + qtyNeeded > cap) {
-  const suggestions = await suggestAlternateWindows(deliveryDate, timeWindow, qtyNeeded);
-  return res.status(409).json({ error:'window_full', suggestions });
-}
+    // Total window capacity (existing logic)
+    const cap = await resolveCapacity(deliveryDate, timeWindow);
+    const cur = await countOccupied(deliveryDate, timeWindow);
+    if (cur + qtyNeeded > cap) {
+      const suggestions = await findAlternativeWindows(
+        deliveryDate,
+        timeWindow,
+        qtyNeeded
+      );
+      return res.status(409).json({ error: 'window_full', suggestions });
+    }
 
-// NEW: per-driver enforcement & assignment (if DriverCaps exist)
-const pick = await pickDriver(deliveryDate, timeWindow, qtyNeeded);
-if (pick.enforced && !pick.driver) {
-  // all drivers full for this window even if total cap says otherwise
-  const suggestions = await suggestAlternateWindows(deliveryDate, timeWindow, qtyNeeded);
-  return res.status(409).json({ error:'driver_full', suggestions });
-}
-const chosenDriver = pick.driver || null;
+    // Per-driver enforcement & assignment (if DriverCaps exist)
+    const pick = await pickDriver(deliveryDate, timeWindow, qtyNeeded);
+    if (pick.enforced && !pick.driver) {
+      // All drivers are full for this window even if total cap allows
+      const suggestions = await findAlternativeWindows(
+        deliveryDate,
+        timeWindow,
+        qtyNeeded
+      );
+      return res.status(409).json({ error: 'driver_full', suggestions });
+    }
+    const chosenDriver = pick.driver || null;
 
-// --- UPDATE: writePendingReservation now stores Driver field when provided ---
-async function writePendingReservation({ date, window, qty, reservationId, driver }){
-  try{
-    if (!process.env.AIRTABLE_API_KEY || !process.env.AIRTABLE_BASE_ID) return;
-    const key = process.env.AIRTABLE_API_KEY;
-    const base= process.env.AIRTABLE_BASE_ID;
-    const table= process.env.AIRTABLE_TABLE_SLOTS || 'Slots';
-    const u = `https://api.airtable.com/v0/${base}/${encodeURIComponent(table)}`;
-    const fields = {
-      Date: date,
-      Window: window,
-      Status: 'pending',
-      Items: Number(qty || 1),
-      ReservationId: reservationId,
-      Updated: new Date().toISOString()
-    };
-    if (driver) fields.Driver = driver;
-    await fetch(u, {
-      method:'POST',
-      headers:{ 'Authorization': 'Bearer ' + key, 'Content-Type':'application/json' },
-      body: JSON.stringify({ fields })
-    });
-  } catch (e) {
-    if (process.env.SOFT_RESERVATIONS === '1') return; // ignore if you’ve enabled soft reservations
-    throw e;
-  }
-}
-
-
-// (then continue to create the Stripe Checkout Session… include driver in metadata if you like)
-
-    // ---- Pending reservation in Slots (best effort) ----
+    // ---------- Pending reservation in Slots (best effort) ----------
     let reservationId = '';
     try {
-      reservationId = await createPendingReservation(deliveryDate, timeWindow, totalQty);
+      reservationId = await createPendingReservation(
+        deliveryDate,
+        timeWindow,
+        qtyNeeded,
+        chosenDriver // NEW: store driver on pending row when present
+      );
     } catch (err) {
       console.error('Slots pending create threw:', err);
     }
@@ -112,20 +114,24 @@ async function writePendingReservation({ date, window, qty, reservationId, drive
       }
     }
 
-    // ---- Stripe Checkout Session ----
+    // ---------- Stripe Checkout Session ----------
     let session;
     try {
       session = await stripe.checkout.sessions.create({
-        mode: m,
-        line_items: items.map(i => ({ price: i.price, quantity: i.quantity || 1 })),
+        mode: modeRaw,
+        line_items: items.map((i) => ({
+          price: i.price,
+          quantity: i.quantity || 1
+        })),
         allow_promotion_codes: true,
         success_url: `${SITE_URL}/thank-you.html?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${SITE_URL}/`,
         metadata: {
           deliveryDate,
-          timeWindow,
+          timeWindow, // normalized label, e.g., "6:00–7:00 AM"
           reservationId,
-          order_notes: String(orderNotes || '').slice(0, 500)
+          driver: chosenDriver || '',
+          order_notes: String(body.orderNotes || '').slice(0, 500)
         },
         custom_fields: [
           {
@@ -138,10 +144,13 @@ async function writePendingReservation({ date, window, qty, reservationId, drive
       });
     } catch (err) {
       // Try to free the hold if we actually created one
-      try { await cancelReservation(reservationId); } catch {}
+      try {
+        await cancelReservation(reservationId);
+      } catch {}
       const msg = String(err?.message || '').toLowerCase();
       if (msg.includes('no such price')) return res.status(400).json({ error: 'invalid_price' });
-      if (msg.includes('test mode') && msg.includes('live')) return res.status(500).json({ error: 'stripe_key_mismatch' });
+      if (msg.includes('test mode') && msg.includes('live'))
+        return res.status(500).json({ error: 'stripe_key_mismatch' });
       console.error('Stripe create session failed:', err);
       return res.status(502).json({ error: 'stripe_error' });
     }
@@ -155,30 +164,61 @@ async function writePendingReservation({ date, window, qty, reservationId, drive
 
 /* ------------ Helpers ------------ */
 
-// --- NEW: pick a driver with remaining capacity for (date, timeWindow, qtyNeeded)
-async function pickDriver(date, window, qtyNeeded){
-  const key = process.env.AIRTABLE_API_KEY, base = process.env.AIRTABLE_BASE_ID;
+// Normalize "6:00-7:00 AM", "6:00 – 7:00 am", "6:00–7:00AM" → exactly a value from getWindows()
+function normalizeWindow(raw) {
+  if (!raw) return '';
+  let s = String(raw).trim();
+
+  // Convert hyphen +/- spaces to en-dash; collapse spaces around dash
+  s = s.replace(/\s*-\s*/g, '–').replace(/\s*–\s*/g, '–');
+
+  // Ensure single space before AM/PM (if present) and uppercase
+  s = s.replace(/\s*(am|pm)$/i, (m) => ' ' + m.toUpperCase());
+
+  // Direct match first
+  if (getWindows().includes(s)) return s;
+
+  // Try adding AM/PM if omitted (common if option text lacks suffix)
+  const tryAm = s.endsWith(' AM') ? s : `${s} AM`;
+  const tryPm = s.endsWith(' PM') ? s : `${s} PM`;
+  if (getWindows().includes(tryAm)) return tryAm;
+  if (getWindows().includes(tryPm)) return tryPm;
+
+  // Fallback: match by start segment (e.g., "6:00–7:00")
+  const start = s.split('–')[0];
+  const found = getWindows().find((w) => w.startsWith(start));
+  return found || '';
+}
+
+// NEW: pick a driver with remaining capacity for (date, timeWindow, qtyNeeded)
+async function pickDriver(date, window, qtyNeeded) {
+  const key = process.env.AIRTABLE_API_KEY,
+    base = process.env.AIRTABLE_BASE_ID;
   if (!key || !base) return { driver: null, enforced: false }; // no Airtable → skip per-driver
   const driverCapsTable = process.env.AIRTABLE_TABLE_DRIVER_CAPS || 'DriverCaps';
   const slotsTable = process.env.AIRTABLE_TABLE_SLOTS || 'Slots';
 
   // 1) load per-driver caps
   const f = encodeURIComponent(`AND({Date}='${date}',{Window}='${window}')`);
-  const url = `https://api.airtable.com/v0/${base}/${encodeURIComponent(driverCapsTable)}?filterByFormula=${f}&pageSize=100`;
-  const capsRes = await fetch(url, { headers:{ Authorization:'Bearer ' + key } });
+  const url = `https://api.airtable.com/v0/${base}/${encodeURIComponent(
+    driverCapsTable
+  )}?filterByFormula=${f}&pageSize=100`;
+  const capsRes = await fetch(url, { headers: { Authorization: 'Bearer ' + key } });
   if (!capsRes.ok) return { driver: null, enforced: false };
   const capsJson = await capsRes.json();
   const caps = {};
-  for (const rec of (capsJson.records || [])){
+  for (const rec of capsJson.records || []) {
     const d = String(rec.fields?.Driver || '').trim();
     const c = Number(rec.fields?.Capacity || 0);
-    if (d) caps[d] = (Number.isFinite(c) ? c : 0);
+    if (d) caps[d] = Number.isFinite(c) ? c : 0;
   }
   const drivers = Object.keys(caps);
   if (!drivers.length) return { driver: null, enforced: false }; // no per-driver caps configured
 
   // 2) load current usage per driver (pending fresh + confirmed; ignore AdminHold)
-  const sinceIso = new Date(Date.now() - (Number(process.env.PENDING_FRESH_MIN || 60))*60*1000).toISOString();
+  const sinceIso = new Date(
+    Date.now() - Number(process.env.PENDING_FRESH_MIN || 60) * 60 * 1000
+  ).toISOString();
   const filter = [
     `{Date}='${date}'`,
     `{Window}='${window}'`,
@@ -186,18 +226,22 @@ async function pickDriver(date, window, qtyNeeded){
     'NOT({AdminHold}=1)'
   ].join(',');
   const formula = `AND(${filter})`;
-  let offset, usage = {};
-  do{
-    const u = new URL(`https://api.airtable.com/v0/${base}/${encodeURIComponent(slotsTable)}`);
+  let offset,
+    usage = {};
+  do {
+    const u = new URL(
+      `https://api.airtable.com/v0/${base}/${encodeURIComponent(slotsTable)}`
+    );
     u.searchParams.set('filterByFormula', formula);
-    u.searchParams.set('pageSize','100');
+    u.searchParams.set('pageSize', '100');
     if (offset) u.searchParams.set('offset', offset);
-    const r = await fetch(u.toString(), { headers:{ Authorization:'Bearer ' + key }});
+    const r = await fetch(u.toString(), { headers: { Authorization: 'Bearer ' + key } });
     if (!r.ok) break;
     const j = await r.json();
-    for (const rec of (j.records || [])){
+    for (const rec of j.records || []) {
       const f = rec.fields || {};
-      const n = Number(f.Items || 0); if (!Number.isFinite(n)) continue;
+      const n = Number(f.Items || 0);
+      if (!Number.isFinite(n)) continue;
       const drv = String(f.Driver || '').trim() || '(unassigned)';
       usage[drv] = (usage[drv] || 0) + n;
     }
@@ -205,11 +249,13 @@ async function pickDriver(date, window, qtyNeeded){
   } while (offset);
 
   // 3) choose driver with remaining >= qtyNeeded, smallest current load
-  let best = null, bestLoad = Infinity;
-  for (const d of drivers){
+  let best = null,
+    bestLoad = Infinity;
+  for (const d of drivers) {
     const remain = (caps[d] || 0) - (usage[d] || 0);
-    if (remain >= qtyNeeded && (usage[d]||0) < bestLoad){
-      best = d; bestLoad = (usage[d]||0);
+    if (remain >= qtyNeeded && (usage[d] || 0) < bestLoad) {
+      best = d;
+      bestLoad = usage[d] || 0;
     }
   }
   return { driver: best, enforced: true };
@@ -218,15 +264,27 @@ async function pickDriver(date, window, qtyNeeded){
 // Body reader for Vercel/Node
 async function readJson(req) {
   if (req.body) {
-    if (typeof req.body === 'string') { try { return JSON.parse(req.body); } catch { return {}; } }
+    if (typeof req.body === 'string') {
+      try {
+        return JSON.parse(req.body);
+      } catch {
+        return {};
+      }
+    }
     if (typeof req.body === 'object') return req.body;
   }
   let body = '';
   await new Promise((resolve) => {
-    req.on('data', (chunk) => { body += chunk; });
+    req.on('data', (chunk) => {
+      body += chunk;
+    });
     req.on('end', resolve);
   });
-  try { return JSON.parse(body || '{}'); } catch { return {}; }
+  try {
+    return JSON.parse(body || '{}');
+  } catch {
+    return {};
+  }
 }
 
 // Keep in sync with site & Airtable
@@ -264,19 +322,23 @@ async function countOccupied(date, win) {
   u.searchParams.set('filterByFormula', formula);
   u.searchParams.set('pageSize', '100');
 
-  let offset = null, count = 0;
+  let offset = null,
+    count = 0;
   do {
     if (offset) u.searchParams.set('offset', offset);
     const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${key}` } });
     if (!r.ok) break;
     const j = await r.json();
-    count += (j.records || []).reduce((s, rec) => s + Number(rec.fields?.Items || 1), 0);
+    count += (j.records || []).reduce(
+      (s, rec) => s + Number(rec.fields?.Items || 1),
+      0
+    );
     offset = j.offset;
   } while (offset);
   return count;
 }
 
-async function createPendingReservation(date, win, qty) {
+async function createPendingReservation(date, win, qty, driver = null) {
   const base = process.env.AIRTABLE_BASE_ID;
   const key = process.env.AIRTABLE_API_KEY;
   const table = encodeURIComponent(process.env.AIRTABLE_TABLE_SLOTS || 'Slots');
@@ -284,7 +346,19 @@ async function createPendingReservation(date, win, qty) {
   if (!base || !key) return ''; // let SOFT_RES decide
 
   const url = `https://api.airtable.com/v0/${base}/${table}`;
-  const reservationId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const reservationId =
+    Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+  const fields = {
+    Date: date,
+    Window: win,
+    Status: 'pending',
+    Items: Number(qty) || 1,
+    ReservationId: reservationId,
+    Updated: new Date().toISOString()
+  };
+  if (driver) fields.Driver = driver;
+
   const r = await fetch(url, {
     method: 'POST',
     headers: {
@@ -292,16 +366,7 @@ async function createPendingReservation(date, win, qty) {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      records: [{
-        fields: {
-          Date: date,
-          Window: win,
-          Status: 'pending',
-          Items: Number(qty) || 1,
-          ReservationId: reservationId,
-          Updated: new Date().toISOString()
-        }
-      }]
+      records: [{ fields }]
     })
   });
   if (!r.ok) {
@@ -320,8 +385,13 @@ async function cancelReservation(reservationId) {
 
   // Lookup by ReservationId
   const listUrl = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-  listUrl.searchParams.set('filterByFormula', `AND({ReservationId}='${reservationId}', {Status}='pending')`);
-  const listRes = await fetch(listUrl.toString(), { headers: { Authorization: `Bearer ${key}` } });
+  listUrl.searchParams.set(
+    'filterByFormula',
+    `AND({ReservationId}='${reservationId}', {Status}='pending')`
+  );
+  const listRes = await fetch(listUrl.toString(), {
+    headers: { Authorization: `Bearer ${key}` }
+  });
   if (!listRes.ok) return;
   const data = await listRes.json();
   const rec = (data.records || [])[0];
@@ -330,15 +400,20 @@ async function cancelReservation(reservationId) {
   // Patch to canceled
   await fetch(`https://api.airtable.com/v0/${base}/${table}`, {
     method: 'PATCH',
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    headers: {
+      Authorization: `Bearer ${key}`,
+      'Content-Type': 'application/json'
+    },
     body: JSON.stringify({
-      records: [{ id: rec.id, fields: { Status: 'canceled', Updated: new Date().toISOString() } }]
+      records: [
+        { id: rec.id, fields: { Status: 'canceled', Updated: new Date().toISOString() } }
+      ]
     })
-  }).catch(()=>{});
+  }).catch(() => {});
 }
 
 async function findAlternativeWindows(date, currentWin, qtyNeeded) {
-  const wins = getWindows().filter(w => w !== currentWin);
+  const wins = getWindows().filter((w) => w !== currentWin);
   const out = [];
   for (const w of wins) {
     const cap = await resolveCapacity(date, w);
@@ -349,6 +424,10 @@ async function findAlternativeWindows(date, currentWin, qtyNeeded) {
   return out;
 }
 
-async function safeText(r){
-  try { return await r.text(); } catch { return ''; }
+async function safeText(r) {
+  try {
+    return await r.text();
+  } catch {
+    return '';
+  }
 }
