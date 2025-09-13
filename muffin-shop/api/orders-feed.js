@@ -1,9 +1,9 @@
 // api/orders-feed.js
 // Secure JSON feed of orders for a given date/status + CORS.
 // Auth: Authorization: Bearer <ADMIN_API_TOKEN>  (also supports x-admin-token and ?token=)
+// Field-name tolerant (snake_case OR Title Case). Falls back to client-side filtering/sorting.
 
 function withCors(req, res) {
-  // If you want to lock this down, replace * with your localhost origin(s)
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Admin-Token');
@@ -12,22 +12,13 @@ function withCors(req, res) {
 }
 
 function getAdminToken(req) {
-  // Preferred: Authorization: Bearer <token>
   const auth = (req.headers.authorization || '').trim();
-  if (auth.toLowerCase().startsWith('bearer ')) {
-    return auth.slice(7);
-  }
-  // Back-compat: x-admin-token header
+  if (auth.toLowerCase().startsWith('bearer ')) return auth.slice(7);
   const hdr = (req.headers['x-admin-token'] || '').toString().trim();
   if (hdr) return hdr;
-  // Fallbacks: ?token= or JSON {token}
   const q = (req.query && req.query.token) ? String(req.query.token) : '';
   if (q) return q;
-  try {
-    if (req.body && typeof req.body === 'object' && req.body.token) {
-      return String(req.body.token);
-    }
-  } catch {}
+  try { if (req.body && typeof req.body === 'object' && req.body.token) return String(req.body.token); } catch {}
   return '';
 }
 
@@ -43,7 +34,6 @@ export default async function handler(req, res) {
     if (!process.env.ADMIN_API_TOKEN || token !== process.env.ADMIN_API_TOKEN) {
       return res.status(401).json({ ok:false, error:'unauthorized' });
     }
-
     if (!process.env.AIRTABLE_API_KEY || !process.env.AIRTABLE_BASE_ID) {
       return res.status(500).json({ ok:false, error:'airtable_config' });
     }
@@ -51,93 +41,127 @@ export default async function handler(req, res) {
     const baseId = process.env.AIRTABLE_BASE_ID;
     const table  = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || 'Orders');
     const apiUrl = `https://api.airtable.com/v0/${baseId}/${table}`;
+    const headers = { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` };
 
-    // Filters
+    // Inputs
     const today = new Date().toISOString().slice(0,10);
     const date = String(req.query.date || today);
-    const status = (req.query.status ? String(req.query.status) : '').trim();
+    const statusFilter = (req.query.status ? String(req.query.status) : '').trim();
 
-    // Filter: exact date match, optional status
-    let filterFormula = `{delivery_date}='${date}'`;
-    if (status) filterFormula = `AND(${filterFormula}, {status}='${status}')`;
+    // --- tolerant date filtering (server-side if possible, else client-side) ---
+    const dateFieldCandidates = ['delivery_date', 'Delivery Date', 'Date'];
+    const records = await listAirtableByDateTolerant(apiUrl, headers, date, dateFieldCandidates);
 
-    // Sort: by preferred_window, then created_at (oldest first)
-    const sortBy = [
-      { field: 'preferred_window', direction: 'asc' },
-      { field: 'created_at',       direction: 'asc' }
-    ];
+    // Helper to select first present field
+    const pick = (fields, names, fallback='') => {
+      for (const n of names) {
+        if (Object.prototype.hasOwnProperty.call(fields, n) && fields[n] != null) return fields[n];
+      }
+      return fallback;
+    };
 
-    const records = await listAirtable(apiUrl, filterFormula, sortBy);
+    // Client-side filter by date (in case we had to fall back to unfiltered fetch)
+    const sameDate = (v) => String(v || '').slice(0,10) === date;
+    const filteredByDate = records.filter(r => sameDate(pick(r.fields || {}, dateFieldCandidates)));
 
-    // Base order projection (keep old shape)
-    const orders = records.map(r => {
+    // Optional status filter (tolerant)
+    const statusNames = ['status', 'Status'];
+    const filtered = statusFilter
+      ? filteredByDate.filter(r => {
+          const v = String(pick(r.fields || {}, statusNames, '')).toLowerCase();
+          return v === statusFilter.toLowerCase();
+        })
+      : filteredByDate;
+
+    // Sort locally: window then created
+    const winNames = ['preferred_window', 'Preferred Window', 'Window'];
+    const createdNames = ['created_at', 'Created', 'Created At'];
+    filtered.sort((a,b) => {
+      const fa = a.fields || {}, fb = b.fields || {};
+      const wa = String(pick(fa, winNames, '')), wb = String(pick(fb, winNames, ''));
+      const ca = String(pick(fa, createdNames, '')), cb = String(pick(fb, createdNames, ''));
+      return wa.localeCompare(wb) || ca.localeCompare(cb);
+    });
+
+    // Shape response objects (tolerant field mapping)
+    const orders = filtered.map(r => {
       const f = r.fields || {};
       return {
         id: r.id,
-        delivery_date:     f.delivery_date || '',
-        preferred_window:  f.preferred_window || '',
-        status:            f.status || '',
-        delivery_time:     f.delivery_time || '',
-        route_position:    (f.route_position ?? null),
-        customer_name:     f.customer_name || '',
-        email:             f.email || '',
-        phone:             f.phone || '',
-        address:           f.address || '',
-        notes:             f.notes || '',
-        total:             (f.total ?? null),
-        items:             f.items || '',              // include if present
-        stripe_session_id: f.stripe_session_id || '',
-        created_at:        f.created_at || '',
-        // NEW: pass through if you already store a driver on the order
-        driver:            f.driver || f.Driver || ''
+        delivery_date:     pick(f, ['delivery_date','Delivery Date','Date'], ''),
+        preferred_window:  pick(f, ['preferred_window','Preferred Window','Window'], ''),
+        status:            pick(f, ['status','Status'], ''),
+        delivery_time:     pick(f, ['delivery_time','Delivery Time'], ''),
+        route_position:    pick(f, ['route_position','Route Position'], null),
+        customer_name:     pick(f, ['customer_name','Customer Name','Name'], ''),
+        email:             pick(f, ['email','Email'], ''),
+        phone:             pick(f, ['phone','Phone'], ''),
+        address:           pick(f, ['address','Address'], ''),
+        notes:             pick(f, ['notes','Notes'], ''),
+        total:             pick(f, ['total','Total'], null),
+        items:             pick(f, ['items','Items'], ''),
+        stripe_session_id: pick(f, ['stripe_session_id','Stripe Session ID','Session ID'], ''),
+        created_at:        pick(f, ['created_at','Created','Created At'], ''),
+        driver:            pick(f, ['driver','Driver'], '')
       };
     });
 
-    // -------- Driver suggestions (no writes here) --------
-    // If DriverCaps/Slots are configured, pre-suggest a driver per window
+    // --- Driver suggestions (read-only; real write happens on approve) ---
     const suggestionResult = await suggestDriversForDate(date, orders);
-    const drivers = suggestionResult.drivers; // union of drivers with caps
-    const byKey = suggestionResult.byKey;     // map id -> suggested driver
+    const drivers = suggestionResult.drivers;
+    const byKey = suggestionResult.byKey;
 
     const enriched = orders.map(o => ({
       ...o,
-      suggested_driver: o.driver ? '' : (byKey[o.id] || '') // only suggest if not already assigned
+      suggested_driver: o.driver ? '' : (byKey[o.id] || '')
     }));
 
-    return res.status(200).json({
-      ok:true,
-      date,
-      count: enriched.length,
-      orders: enriched,
-      // NEW: drivers list so the UI can render a dropdown
-      drivers
-    });
+    return res.status(200).json({ ok:true, date, count: enriched.length, orders: enriched, drivers });
   } catch (err) {
     console.error('orders-feed error', err?.message || err);
     return res.status(500).json({ ok:false, error:'server_error' });
   }
 }
 
-async function listAirtable(baseUrl, filterByFormula, sorts = []) {
-  const headers = { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` };
+/* ---------------- Airtable listing (tolerant) ---------------- */
+
+async function listAirtableByDateTolerant(baseUrl, headers, date, dateFieldCandidates){
+  // Try server-side filtering with each candidate field; on failure, fall back to no filter.
+  for (const field of dateFieldCandidates) {
+    try {
+      const f = `AND({${field}}='${date}')`;
+      const recs = await listAirtable(baseUrl, headers, f);
+      // If this worked, use it.
+      return recs;
+    } catch (e) {
+      // Unknown field name or formula error – try next candidate
+      continue;
+    }
+  }
+  // Fallback: fetch without filter and let caller filter client-side.
+  try { return await listAirtable(baseUrl, headers, null); } catch { return []; }
+}
+
+async function listAirtable(baseUrl, headers, filterByFormula /* or null */) {
   let offset = null, out = [];
   do {
     const u = new URL(baseUrl);
     u.searchParams.set('pageSize', '100');
     if (filterByFormula) u.searchParams.set('filterByFormula', filterByFormula);
     if (offset) u.searchParams.set('offset', offset);
-    sorts.forEach((s, i) => {
-      u.searchParams.set(`sort[${i}][field]`, s.field);
-      u.searchParams.set(`sort[${i}][direction]`, s.direction || 'asc');
-    });
     const r = await fetch(u.toString(), { headers });
-    if (!r.ok) throw new Error(`Airtable list ${r.status}: ${await r.text().catch(()=> '')}`);
+    if (!r.ok) {
+      const txt = await safeText(r);
+      throw new Error(`Airtable list ${r.status}: ${txt}`);
+    }
     const j = await r.json();
     out.push(...(j.records || []));
     offset = j.offset;
   } while (offset);
   return out;
 }
+
+async function safeText(r){ try { return await r.text(); } catch { return ''; } }
 
 /* ---------------- Driver suggestion helpers ---------------- */
 
@@ -147,13 +171,10 @@ async function suggestDriversForDate(date, orders){
   const driverCapsTable = process.env.AIRTABLE_TABLE_DRIVER_CAPS || 'DriverCaps';
   const slotsTable      = process.env.AIRTABLE_TABLE_SLOTS       || 'Slots';
 
-  // If not configured, return no-op
   if (!key || !base) return { drivers: [], byKey: {} };
 
-  // Which windows do we need to consider?
   const windows = Array.from(new Set(orders.map(o => o.preferred_window).filter(Boolean)));
 
-  // Load caps and usage per window
   const capsPerWindow = {};
   const usagePerWindow = {};
   const allDrivers = new Set();
@@ -164,8 +185,6 @@ async function suggestDriversForDate(date, orders){
     Object.keys(capsPerWindow[w]).forEach(d => allDrivers.add(d));
   }
 
-  // Simulate assigning one "unit" per order to the least-loaded driver with remaining capacity.
-  // (We only *suggest* here; the real write happens on Approve.)
   const byKey = {};
   for (const w of windows){
     const caps = capsPerWindow[w];
@@ -173,15 +192,14 @@ async function suggestDriversForDate(date, orders){
     const group = orders.filter(o => o.preferred_window === w);
 
     for (const o of group){
-      if (o.driver) continue; // already assigned
+      if (o.driver) continue;
       const pick = pickDriverFrom(caps, usage, 1);
       if (pick){
         byKey[o.id] = pick;
-        usage[pick] = (usage[pick] || 0) + 1; // consume simulated capacity
+        usage[pick] = (usage[pick] || 0) + 1;
       }
     }
   }
-
   return { drivers: Array.from(allDrivers).sort(), byKey };
 }
 
@@ -205,7 +223,7 @@ async function loadDriverUsage(base, key, slotsTable, date, window){
   const filter = [
     `{Date}='${date}'`,
     `{Window}='${window}'`,
-    `OR({Status}='confirmed', AND({Status}='pending', IS_AFTER({Updated}, '${sinceIso}')))` ,
+    `OR({Status}='confirmed', AND({Status}='pending', IS_AFTER({Updated}, '${sinceIso}')))`,
     'NOT({AdminHold}=1)'
   ].join(',');
   const formula = `AND(${filter})`;
