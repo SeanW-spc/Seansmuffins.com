@@ -1,6 +1,9 @@
 // api/create-checkout-session.js
-// Checks capacity (incl. DriverCaps sum override), optionally enforces per-driver caps,
-// holds a slot, then creates a Stripe Checkout Session.
+// Driver-only capacity enforcement:
+// - Capacity = sum of DriverCaps for (date, window). If none exist => block.
+// - Blocks when no driver can fit qtyNeeded.
+// - Still counts AdminHold + fresh pending in total occupancy.
+// - Picks least-loaded driver with room; stores on pending Slot + Stripe metadata.
 
 import Stripe from 'stripe';
 const stripeKey = process.env.STRIPE_SECRET_KEY ?? '';
@@ -16,10 +19,31 @@ const SOFT_RES =
   !process.env.AIRTABLE_BASE_ID;
 
 // TEMPORARY safety: also fail-open when Airtable returns a schema/table error.
-// Set FAIL_OPEN_ON_AIRTABLE_ERROR=0 to disable once Airtable is fully configured.
 const FAIL_OPEN_ON_AIRTABLE_ERROR =
   (process.env.FAIL_OPEN_ON_AIRTABLE_ERROR ?? '1') !== '0';
 
+/* ------------ Dash helpers & Airtable paging ------------ */
+const dashVariants = (win) => {
+  const en = String(win || '').replace(/-/g, '–');
+  const hy = en.replace(/–|—/g, '-');
+  return [en, hy];
+};
+async function readAll(urlStr, headers){
+  const base = new URL(urlStr);
+  const out = []; let offset;
+  do{
+    const u = new URL(base);
+    if (offset) u.searchParams.set('offset', offset);
+    const r = await fetch(u.toString(), { headers });
+    if (!r.ok) break;
+    const j = await r.json();
+    (j.records || []).forEach(rec => out.push(rec.fields || {}));
+    offset = j.offset;
+  } while (offset);
+  return out;
+}
+
+/* ------------ HTTP handler ------------ */
 export default async function handler(req, res) {
   try {
     if (req.method !== 'POST') {
@@ -35,12 +59,9 @@ export default async function handler(req, res) {
     const body = (await readJson(req)) || {};
     const modeRaw = String(body.mode || 'payment').toLowerCase();
 
-    // Accept BOTH camelCase and snake_case from client
     const items = body.items;
-    const rawDeliveryDate =
-      body.deliveryDate ?? body.delivery_date ?? body.delivery ?? '';
-    const rawWindow =
-      body.timeWindow ?? body.preferred_window ?? body.preferredWindow ?? '';
+    const rawDeliveryDate = body.deliveryDate ?? body.delivery_date ?? body.delivery ?? '';
+    const rawWindow = body.timeWindow ?? body.preferred_window ?? body.preferredWindow ?? '';
 
     const timeWindow = normalizeWindow(rawWindow);
     const deliveryDate = String(rawDeliveryDate || '');
@@ -54,7 +75,6 @@ export default async function handler(req, res) {
 
     for (const it of items) {
       if (!it || typeof it.price !== 'string' || !it.price) {
-        // Align with client UI
         return res.status(400).json({ error: 'invalid_price' });
       }
     }
@@ -66,26 +86,34 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'invalid_date' });
     }
 
-    // ---------- Capacity check by total quantity (driver-aware) ----------
+    // ---------- Capacity check (driver-only) ----------
     const qtyNeeded = Array.isArray(items)
       ? items.reduce((n, it) => n + Number(it?.quantity || 1), 0)
       : 1;
 
-    // Capacity = sum(DriverCaps) if any exist; else SlotCaps override; else default
-    const cap = await resolveCapacity(deliveryDate, timeWindow);
-    const cur = await countOccupied(deliveryDate, timeWindow); // includes AdminHold and fresh pending
-    if (cur + qtyNeeded > cap) {
+    const { foundAny, capsByDriver } = await loadDriverCaps(deliveryDate, timeWindow);
+    if (!foundAny) {
+      // No driver capacity defined for that window/date
+      return res.status(409).json({ error: 'driver_full' });
+    }
+
+    // Current usage totals (confirmed + fresh pending; includes AdminHold in TOTAL only)
+    const { totalCurrent, perDriverCurrent } = await loadWindowUsage(deliveryDate, timeWindow);
+
+    // If total cap is already exhausted (incl. AdminHold), fail as window_full
+    const totalCap = Object.values(capsByDriver).reduce((a,b)=>a + (Number(b)||0), 0);
+    if (totalCurrent + qtyNeeded > totalCap) {
       const suggestions = await findAlternativeWindows(deliveryDate, timeWindow, qtyNeeded);
       return res.status(409).json({ error: 'window_full', suggestions });
     }
 
-    // Per-driver enforcement & assignment (if DriverCaps exist)
-    const pick = await pickDriver(deliveryDate, timeWindow, qtyNeeded);
-    if (pick.enforced && !pick.driver) {
+    // Choose least-loaded driver with enough remaining capacity
+    const pick = pickDriverLeastLoaded(capsByDriver, perDriverCurrent, qtyNeeded);
+    if (!pick) {
       const suggestions = await findAlternativeWindows(deliveryDate, timeWindow, qtyNeeded);
       return res.status(409).json({ error: 'driver_full', suggestions });
     }
-    const chosenDriver = pick.driver || null;
+    const chosenDriver = pick;
 
     // ---------- Pending reservation in Slots (best effort) ----------
     let reservationId = '';
@@ -149,14 +177,14 @@ export default async function handler(req, res) {
   }
 }
 
-/* ------------ Helpers ------------ */
+/* ------------ Driver-only capacity helpers ------------ */
 
 // Normalize "6:00-7:00 AM", "6:00 – 7:00 am", "6:00–7:00AM" → exactly a value from getWindows()
 function normalizeWindow(raw) {
   if (!raw) return '';
   let s = String(raw).trim();
-  s = s.replace(/\s*-\s*/g, '–').replace(/\s*–\s*/g, '–');        // use en-dash consistently
-  s = s.replace(/\s*(am|pm)$/i, m => ' ' + m.toUpperCase());       // ensure " AM"/" PM"
+  s = s.replace(/\s*-\s*/g, '–').replace(/\s*–\s*/g, '–');
+  s = s.replace(/\s*(am|pm)$/i, m => ' ' + m.toUpperCase());
   if (getWindows().includes(s)) return s;
   const tryAm = s.endsWith(' AM') ? s : `${s} AM`;
   const tryPm = s.endsWith(' PM') ? s : `${s} PM`;
@@ -166,156 +194,73 @@ function normalizeWindow(raw) {
   return getWindows().find(w => w.startsWith(start)) || '';
 }
 
-// Driver pick with remaining capacity for (date, window, qtyNeeded)
-async function pickDriver(date, window, qtyNeeded) {
-  const key = process.env.AIRTABLE_API_KEY, base = process.env.AIRTABLE_BASE_ID;
-  if (!key || !base) return { driver: null, enforced: false };
-  const driverCapsTable = process.env.AIRTABLE_TABLE_DRIVER_CAPS || 'DriverCaps';
-  const slotsTable = process.env.AIRTABLE_TABLE_SLOTS || 'Slots';
-
-  // 1) load per-driver caps
-  const f = encodeURIComponent(`AND({Date}='${date}',{Window}='${window}')`);
-  const url = `https://api.airtable.com/v0/${base}/${encodeURIComponent(driverCapsTable)}?filterByFormula=${f}&pageSize=100`;
-  const capsRes = await fetch(url, { headers:{ Authorization:'Bearer ' + key } });
-  if (!capsRes.ok) return { driver: null, enforced: false };
-  const capsJson = await capsRes.json();
-  const caps = {};
-  for (const rec of (capsJson.records || [])){
-    const d = String(rec.fields?.Driver || '').trim();
-    const c = Number(rec.fields?.Capacity || 0);
-    if (d) caps[d] = (Number.isFinite(c) ? c : 0);
-  }
-  const drivers = Object.keys(caps);
-  if (!drivers.length) return { driver: null, enforced: false };
-
-  // 2) load current usage per driver (exclude AdminHold, include fresh pending)
-  const sinceIso = new Date(Date.now() - FRESH_MINUTES*60*1000).toISOString();
-  const filter = [
-    `{Date}='${date}'`,
-    `{Window}='${window}'`,
-    `OR({Status}='confirmed', AND({Status}='pending', IS_AFTER({Updated}, '${sinceIso}')))`,
-    'NOT({AdminHold}=1)'
-  ].join(',');
-  const formula = `AND(${filter})`;
-  let offset, usage = {};
-  do{
-    const u = new URL(`https://api.airtable.com/v0/${base}/${encodeURIComponent(slotsTable)}`);
-    u.searchParams.set('filterByFormula', formula);
-    u.searchParams.set('pageSize','100');
-    if (offset) u.searchParams.set('offset', offset);
-    const r = await fetch(u.toString(), { headers:{ Authorization:'Bearer ' + key } });
-    if (!r.ok) break;
-    const j = await r.json();
-    for (const rec of (j.records || [])){
-      const f = rec.fields || {};
-      const n = Number(f.Items || 0); if (!Number.isFinite(n)) continue;
-      const drv = String(f.Driver || '').trim() || '(unassigned)';
-      usage[drv] = (usage[drv] || 0) + n;
-    }
-    offset = j.offset;
-  } while (offset);
-
-  // 3) choose driver with remaining >= qtyNeeded, smallest current load
-  let best = null, bestLoad = Infinity;
-  for (const d of drivers){
-    const remain = (caps[d] || 0) - (usage[d] || 0);
-    if (remain >= qtyNeeded && (usage[d]||0) < bestLoad){
-      best = d; bestLoad = (usage[d]||0);
-    }
-  }
-  return { driver: best, enforced: true };
-}
-
-// Body reader for Vercel/Node
-async function readJson(req) {
-  if (req.body) {
-    if (typeof req.body === 'string') { try { return JSON.parse(req.body); } catch { return {}; } }
-    if (typeof req.body === 'object') return req.body;
-  }
-  let body = '';
-  await new Promise((resolve) => {
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', resolve);
-  });
-  try { return JSON.parse(body || '{}'); } catch { return {}; }
-}
-
 // Keep in sync with site & Airtable
 function getWindows() {
   return ['6:00–7:00 AM', '7:00–8:00 AM', '8:00–9:00 AM'];
 }
 
-// Capacity = sum(DriverCaps) if any exist; else SlotCaps override; else default
-async function resolveCapacity(date, win) {
-  const defCap = Number(process.env.SLOT_CAPACITY_DEFAULT || 12);
-  const base = process.env.AIRTABLE_BASE_ID;
-  const key = process.env.AIRTABLE_API_KEY;
-  if (!base || !key) return defCap;
-
-  const slotTable   = encodeURIComponent(process.env.AIRTABLE_TABLE_SLOT_CAPS   || 'SlotCaps');
+// Sum DriverCaps and also return per-driver map
+async function loadDriverCaps(date, windowLabel) {
+  const key  = process.env.AIRTABLE_API_KEY, base = process.env.AIRTABLE_BASE_ID;
   const driverTable = encodeURIComponent(process.env.AIRTABLE_TABLE_DRIVER_CAPS || 'DriverCaps');
+  if (!key || !base) return { foundAny: false, capsByDriver: {} };
 
-  // Slot override (optional)
-  let slotCap = null;
-  {
-    const u = new URL(`https://api.airtable.com/v0/${base}/${slotTable}`);
-    u.searchParams.set('filterByFormula', `AND({Date}='${date}', {Window}='${win}')`);
-    u.searchParams.set('maxRecords','1');
-    const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${key}` } });
-    if (r.ok){
-      const j = await r.json();
-      const rec = (j.records || [])[0];
-      if (rec && rec.fields?.Capacity != null){
-        const n = Number(rec.fields.Capacity);
-        slotCap = Number.isFinite(n) ? n : null;
-      }
-    }
+  const [en, hy] = dashVariants(windowLabel);
+  const filter = `AND({Date}='${date}', OR({Window}='${en}', {Window}='${hy}'))`;
+  const url = `https://api.airtable.com/v0/${base}/${driverTable}?filterByFormula=${encodeURIComponent(filter)}&pageSize=100`;
+  const rows = await readAll(url, { Authorization: 'Bearer ' + key });
+
+  const capsByDriver = {};
+  let foundAny = false;
+  for (const f of rows) {
+    const d = String(f.Driver || '').trim();
+    const c = Number(f.Capacity || 0);
+    if (!d || !Number.isFinite(c)) continue;
+    capsByDriver[d] = (capsByDriver[d] || 0) + c;
+    foundAny = true;
   }
-
-  // Per-driver caps (if present, they define total capacity)
-  let perDriverSum = 0, foundDriverCaps = false;
-  {
-    const f = encodeURIComponent(`AND({Date}='${date}',{Window}='${win}')`);
-    const u = `https://api.airtable.com/v0/${base}/${driverTable}?filterByFormula=${f}&pageSize=100`;
-    const r = await fetch(u, { headers:{ Authorization: `Bearer ${key}` } });
-    if (r.ok){
-      const j = await r.json();
-      for (const rec of (j.records || [])){
-        const n = Number(rec.fields?.Capacity || 0);
-        if (Number.isFinite(n)) { perDriverSum += n; foundDriverCaps = true; }
-      }
-    }
-  }
-
-  if (foundDriverCaps) return perDriverSum;
-  if (slotCap != null)  return slotCap;
-  return defCap;
+  return { foundAny, capsByDriver };
 }
 
-// Confirmed + fresh pending + AdminHold
-async function countOccupied(date, win) {
-  const base = process.env.AIRTABLE_BASE_ID;
-  const key = process.env.AIRTABLE_API_KEY;
-  if (!base || !key) return 0;
+// Current usage (confirmed + fresh pending); includes AdminHold in TOTAL
+async function loadWindowUsage(date, windowLabel) {
+  const key  = process.env.AIRTABLE_API_KEY, base = process.env.AIRTABLE_BASE_ID;
+  const slotsTable = encodeURIComponent(process.env.AIRTABLE_TABLE_SLOTS || 'Slots');
+  if (!key || !base) return { totalCurrent: 0, perDriverCurrent: {} };
 
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_SLOTS || 'Slots');
-  const u = new URL(`https://api.airtable.com/v0/${base}/${table}`);
+  const [en, hy] = dashVariants(windowLabel);
   const cutoff = new Date(Date.now() - FRESH_MINUTES*60*1000).toISOString();
-  const formula = `AND({Date}='${date}', {Window}='${win}', OR({Status}='confirmed', AND({Status}='pending', IS_AFTER({Updated}, '${cutoff}')), {AdminHold}=1))`;
-  u.searchParams.set('filterByFormula', formula);
-  u.searchParams.set('pageSize', '100');
+  const formula = `AND({Date}='${date}', OR({Window}='${en}', {Window}='${hy}'), OR({Status}='confirmed', AND({Status}='pending', IS_AFTER({Updated}, '${cutoff}')), {AdminHold}=1))`;
+  const url = `https://api.airtable.com/v0/${base}/${slotsTable}?filterByFormula=${encodeURIComponent(formula)}&pageSize=100`;
 
-  let offset = null, count = 0;
-  do {
-    if (offset) u.searchParams.set('offset', offset);
-    const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${key}` } });
-    if (!r.ok) break;
-    const j = await r.json();
-    count += (j.records || []).reduce((s, rec) => s + Number(rec.fields?.Items || 1), 0);
-    offset = j.offset;
-  } while (offset);
-  return count;
+  const rows = await readAll(url, { Authorization: 'Bearer ' + key });
+
+  let totalCurrent = 0;
+  const perDriverCurrent = {};
+  for (const f of rows) {
+    const n = Number(f.Items || 0) || 0;
+    totalCurrent += n; // AdminHold contributes to total
+    if (f.AdminHold) continue; // but not to any driver
+    const d = String(f.Driver || '').trim();
+    if (d) perDriverCurrent[d] = (perDriverCurrent[d] || 0) + n;
+  }
+  return { totalCurrent, perDriverCurrent };
 }
+
+// Choose least-loaded driver that can fit qtyNeeded
+function pickDriverLeastLoaded(capsByDriver, perDriverCurrent, qtyNeeded){
+  let best = null, bestLoad = Infinity;
+  for (const [d, cap] of Object.entries(capsByDriver)) {
+    const used = Number(perDriverCurrent[d] || 0);
+    const remain = Number(cap || 0) - used;
+    if (remain >= qtyNeeded && used < bestLoad) {
+      best = d; bestLoad = used;
+    }
+  }
+  return best;
+}
+
+/* ------------ Slots reservation & misc helpers ------------ */
 
 async function createPendingReservation(date, win, qty, driver = null) {
   const base = process.env.AIRTABLE_BASE_ID;
@@ -390,9 +335,11 @@ async function findAlternativeWindows(date, currentWin, qtyNeeded) {
   const wins = getWindows().filter(w => w !== currentWin);
   const out = [];
   for (const w of wins) {
-    const cap = await resolveCapacity(date, w);
-    const cur = await countOccupied(date, w);
-    if (cur + (Number(qtyNeeded) || 1) <= cap) out.push(w);
+    const { foundAny, capsByDriver } = await loadDriverCaps(date, w);
+    if (!foundAny) continue;
+    const { totalCurrent } = await loadWindowUsage(date, w);
+    const totalCap = Object.values(capsByDriver).reduce((a,b)=>a + (Number(b)||0), 0);
+    if (totalCurrent + (Number(qtyNeeded) || 1) <= totalCap) out.push(w);
     if (out.length >= 3) break;
   }
   return out;
@@ -400,4 +347,18 @@ async function findAlternativeWindows(date, currentWin, qtyNeeded) {
 
 async function safeText(r){
   try { return await r.text(); } catch { return ''; }
+}
+
+// Body reader for Vercel/Node
+async function readJson(req) {
+  if (req.body) {
+    if (typeof req.body === 'string') { try { return JSON.parse(req.body); } catch { return {}; } }
+    if (typeof req.body === 'object') return req.body;
+  }
+  let body = '';
+  await new Promise((resolve) => {
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', resolve);
+  });
+  try { return JSON.parse(body || '{}'); } catch { return {}; }
 }
