@@ -61,7 +61,7 @@
     }
   }
 
-  // Cart qty (read from localStorage to avoid coupling with app.js internals)
+  // Cart qty (read from localStorage to avoid coupling with other files)
   const CART_KEY = 'sm_cart_v1';
   function requestedQty(){
     try {
@@ -122,7 +122,7 @@
     if (!$date) return;
     const max = fmtDateInput(addDays(new Date(), 14));
     $date.max = max;
-    // keep whatever min your app.js already sets
+    // keep whatever min another script may set
     if ($date.value && $date.value > max) $date.value = max;
   }
 
