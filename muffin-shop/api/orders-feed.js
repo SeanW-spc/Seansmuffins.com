@@ -1,6 +1,6 @@
 // api/orders-feed.js
 // Secure JSON feed of orders for a given date/status + CORS.
-// Auth: Authorization: Bearer <ADMIN_API_TOKEN>  (also supports x-admin-token and ?token=)
+// Auth: Authorization: Bearer <ADMIN_API_TOKEN>  (also supports X-Admin-Token and ?token=)
 // Field-name tolerant (snake_case OR Title Case). Falls back to client-side filtering/sorting.
 // Also tolerant of DD-MM-YYYY vs YYYY-MM-DD values.
 
@@ -41,19 +41,17 @@ function normalizeYmd(input) {
   const slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (slash) {
     let mm = Number(slash[1]), dd = Number(slash[2]), yy = Number(slash[3]);
-    if (mm > 12 && dd <= 12) { // looks like DD/MM/YYYY
-      [dd, mm] = [mm, dd];
-    }
+    if (mm > 12 && dd <= 12) { [dd, mm] = [mm, dd]; }
     return `${yy}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`;
   }
 
-  // Fallback: try Date()
   const d = new Date(s);
   if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
-
-  // Last resort: first 10 chars (lets caller try to match)
   return s.slice(0, 10);
 }
+
+// Fail-open switch (mirrors create-checkout-session behavior)
+const FAIL_OPEN_ON_AIRTABLE_ERROR = (process.env.FAIL_OPEN_ON_AIRTABLE_ERROR ?? '1') !== '0';
 
 export default async function handler(req, res) {
   if (withCors(req, res)) return;
@@ -68,13 +66,18 @@ export default async function handler(req, res) {
       return res.status(401).json({ ok:false, error:'unauthorized' });
     }
     if (!process.env.AIRTABLE_API_KEY || !process.env.AIRTABLE_BASE_ID) {
+      if (FAIL_OPEN_ON_AIRTABLE_ERROR) {
+        const today = new Date().toISOString().slice(0,10);
+        return res.status(200).json({ ok:true, date: today, count: 0, orders: [], drivers: [], warning: 'airtable_config' });
+      }
       return res.status(500).json({ ok:false, error:'airtable_config' });
     }
 
-    const baseId = process.env.AIRTABLE_BASE_ID;
-    const table  = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || 'Orders');
-    const apiUrl = `https://api.airtable.com/v0/${baseId}/${table}`;
-    const headers = { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` };
+    const baseId   = process.env.AIRTABLE_BASE_ID;
+    const tableRaw = process.env.AIRTABLE_TABLE_NAME || 'Orders';
+    const table    = encodeURIComponent(tableRaw);
+    const apiUrl   = `https://api.airtable.com/v0/${baseId}/${table}`;
+    const headers  = { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` };
 
     // Inputs
     const today = new Date().toISOString().slice(0,10);
@@ -88,15 +91,32 @@ export default async function handler(req, res) {
       'delivery_date','Delivery Date','Date','deliver_date','deliver_ date','Deliver Date','Deliver_Date'
     ];
     const winNames     = ['preferred_window','Preferred Window','Window'];
-    const createdNames = ['created_at','Created','Created At'];
-    const statusNames  = ['status','Status'];
+    const createdNames = ['created_at','Created','Created At','CreatedAt'];
+    const statusNames  = ['status','Status','Order Status'];
+    const driverNames  = ['driver','Driver','Assigned Driver'];
 
-    // Pull records: try server-side equality on each candidate; if none returns >0,
-    // fetch all and filter locally with normalizeYmd.
-    const { records, usedField, tried, serverCount } =
-      await listAirtableByDateTolerant(apiUrl, headers, normalizedDate, dateFieldCandidates);
+    // Pull records with tolerant server-side try, then fail to client-side filter
+    let listResult;
+    try {
+      listResult = await listAirtableByDateTolerant(apiUrl, headers, normalizedDate, dateFieldCandidates);
+    } catch (err) {
+      // Airtable blew up (404 bad table, 422 bad field, 429 throttle, etc.)
+      console.error('orders-feed Airtable list error:', err?.message || err);
+      if (FAIL_OPEN_ON_AIRTABLE_ERROR) {
+        return res.status(200).json({
+          ok: true,
+          date: normalizedDate,
+          count: 0,
+          orders: [],
+          drivers: [],
+          warning: 'airtable_error'
+        });
+      }
+      return res.status(502).json({ ok:false, error:'airtable_error' });
+    }
 
-    // Helper to select first present field
+    const { records, usedField, tried, serverCount } = listResult;
+
     const pick = (fields, names, fallback='') => {
       for (const n of names) {
         if (Object.prototype.hasOwnProperty.call(fields, n) && fields[n] != null) return fields[n];
@@ -104,7 +124,7 @@ export default async function handler(req, res) {
       return fallback;
     };
 
-    // Client-side filter by date (handles DD-MM-YYYY values in Airtable, formula text, etc.)
+    // Client-side filter by date (handles mixed formats inside Airtable)
     const filteredByDate = records.filter(r => {
       const raw = pick(r.fields || {}, dateFieldCandidates);
       return normalizeYmd(raw) === normalizedDate;
@@ -118,11 +138,11 @@ export default async function handler(req, res) {
         })
       : filteredByDate;
 
-    // Sort locally: window then created
+    // Sort locally: window then created time
     filtered.sort((a,b) => {
       const fa = a.fields || {}, fb = b.fields || {};
-      const wa = String(pick(fa, winNames, '')), wb = String(pick(fb, winNames, ''));
-      const ca = String(pick(fa, createdNames, '')), cb = String(pick(fb, createdNames, ''));
+      const wa = String(pick(fa, winNames, '')); const wb = String(pick(fb, winNames, ''));
+      const ca = String(pick(fa, createdNames, '')); const cb = String(pick(fb, createdNames, ''));
       return wa.localeCompare(wb) || ca.localeCompare(cb);
     });
 
@@ -132,7 +152,7 @@ export default async function handler(req, res) {
       return {
         id: r.id,
         delivery_date:     pick(f, ['delivery_date','Delivery Date','Date'], ''),
-        preferred_window:  pick(f, ['preferred_window','Preferred Window','Window'], ''),
+        preferred_window:  pick(f, winNames, ''),
         status:            pick(f, statusNames, ''),
         delivery_time:     pick(f, ['delivery_time','Delivery Time'], ''),
         route_position:    pick(f, ['route_position','Route Position'], null),
@@ -145,14 +165,19 @@ export default async function handler(req, res) {
         items:             pick(f, ['items','Items'], ''),
         stripe_session_id: pick(f, ['stripe_session_id','Stripe Session ID','Session ID'], ''),
         created_at:        pick(f, createdNames, ''),
-        driver:            pick(f, ['driver','Driver'], '')
+        driver:            pick(f, driverNames, '')
       };
     });
 
     // --- Driver suggestions (read-only; real write happens on approve) ---
-    const suggestionResult = await suggestDriversForDate(normalizedDate, orders);
-    const drivers = suggestionResult.drivers;
-    const byKey = suggestionResult.byKey;
+    let suggestionResult = { drivers: [], byKey: {} };
+    try {
+      suggestionResult = await suggestDriversForDate(normalizedDate, orders);
+    } catch (e) {
+      console.warn('orders-feed driver suggestion skipped:', e?.message || e);
+    }
+    const drivers = suggestionResult.drivers || [];
+    const byKey = suggestionResult.byKey || {};
 
     const enriched = orders.map(o => ({
       ...o,
@@ -169,19 +194,18 @@ export default async function handler(req, res) {
         triedFields: tried,
         serverSideCount: serverCount,
         clientSideCount: enriched.length,
-        sampleDates: records.slice(0,5).map(r => ({
-          id: r.id,
-          raw: dateFieldCandidates.reduce((acc, k) => (k in (r.fields||{}) ? (acc || r.fields[k]) : acc), ''),
-          normalized: normalizeYmd(
-            dateFieldCandidates.reduce((acc, k) => (k in (r.fields||{}) ? (acc || r.fields[k]) : acc), '')
-          )
-        }))
+        table: tableRaw
       };
     }
 
     return res.status(200).json(payload);
   } catch (err) {
     console.error('orders-feed error', err?.message || err);
+    // Final backstop: fail-open if configured
+    if (FAIL_OPEN_ON_AIRTABLE_ERROR) {
+      const today = new Date().toISOString().slice(0,10);
+      return res.status(200).json({ ok:true, date: today, count: 0, orders: [], drivers: [], warning: 'server_error' });
+    }
     return res.status(500).json({ ok:false, error:'server_error' });
   }
 }
@@ -215,22 +239,49 @@ async function listAirtableByDateTolerant(baseUrl, headers, ymd, dateFieldCandid
   return { records: all, usedField, tried, serverCount };
 }
 
+// Simple retry for 429s; graceful empty on 404/422 when fail-open set
 async function listAirtable(baseUrl, headers, filterByFormula /* or null */) {
   let offset = null, out = [];
+  const maxRetries = 2;
+
   do {
     const u = new URL(baseUrl);
     u.searchParams.set('pageSize', '100');
     if (filterByFormula) u.searchParams.set('filterByFormula', filterByFormula);
     if (offset) u.searchParams.set('offset', offset);
-    const r = await fetch(u.toString(), { headers });
-    if (!r.ok) {
+
+    let attempt = 0, lastErr = null;
+    while (attempt <= maxRetries) {
+      const r = await fetch(u.toString(), { headers });
+      if (r.ok) {
+        const j = await r.json();
+        out.push(...(j.records || []));
+        offset = j.offset;
+        break;
+      }
+      if (r.status === 429 && attempt < maxRetries) {
+        // Backoff then retry
+        await new Promise(res => setTimeout(res, 500 * (attempt + 1)));
+        attempt += 1;
+        lastErr = new Error(`429 throttle`);
+        continue;
+      }
+      // Non-OK: decide whether to fail-open here or throw
       const txt = await safeText(r);
-      throw new Error(`Airtable list ${r.status}: ${txt}`);
+      lastErr = new Error(`Airtable list ${r.status}: ${txt}`);
+      if (FAIL_OPEN_ON_AIRTABLE_ERROR && (r.status === 404 || r.status === 422)) {
+        // Bad table/field — return what we have (likely empty) instead of throwing
+        offset = null;
+        break;
+      }
+      throw lastErr;
     }
-    const j = await r.json();
-    out.push(...(j.records || []));
-    offset = j.offset;
+    if (lastErr && !FAIL_OPEN_ON_AIRTABLE_ERROR && (offset !== null)) {
+      // If not fail-open and we didn't break above, rethrow
+      throw lastErr;
+    }
   } while (offset);
+
   return out;
 }
 
