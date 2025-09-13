@@ -2,6 +2,9 @@ const $  = (sel, root=document) => root.querySelector(sel);
 const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
 const on = (el, ev, fn, opts) => el && el.addEventListener(ev, fn, opts);
 
+// --- NEW: normalize various dashes to a simple hyphen for robust key matching
+const normDash = (s) => String(s || '').replace(/–|—/g, '-').trim();
+
 const y = $('#y'); if (y) y.textContent = new Date().getFullYear();
 
 $$('a[href^="#"]').forEach(a => {
@@ -128,44 +131,59 @@ function computeDefaultDeliveryDate(now=new Date()){
   const afterCutoff = (now.getHours()>cutoffH) || (now.getHours()===cutoffH && now.getMinutes()>=cutoffM);
   return addDays(now, afterCutoff ? 2 : 1);
 }
+
+// --- UPDATED: fetchAvailability now requests detailed=1 so we can show per-driver info
 async function fetchAvailability(date){
-  const r = await fetch(`/api/slot-availability?date=${encodeURIComponent(date)}`);
+  const r = await fetch(`/api/slot-availability?date=${encodeURIComponent(date)}&detailed=1`, { cache: 'no-store' });
   if (!r.ok) throw new Error('avail_fetch');
   return await r.json();
 }
+
+// --- UPDATED: normalizeAvailability keys with dash normalization
 function normalizeAvailability(data){
-  const map = new Map();
-  if (!data) return map;
+  const map = new Map();         // normalized-window -> available count
+  const rawByWin = {};           // original response windows (for per-driver note render)
+  if (!data) return { map, rawByWin };
+
   if (Array.isArray(data.windows)){
     for (const w of data.windows){
       const label = w.window || w.label || w.name;
       const avail = Number(w.available ?? (Number(w.capacity||0) - Number(w.current||0)));
-      if (label) map.set(label, Math.max(0, isNaN(avail) ? 0 : avail));
+      if (label){
+        map.set(normDash(label), Math.max(0, isNaN(avail) ? 0 : avail));
+        rawByWin[label] = w;
+      }
     }
   } else if (data.windows && typeof data.windows === 'object'){
     for (const [label, v] of Object.entries(data.windows)){
       const raw = (v && (v.available ?? (v.capacity - v.current)));
       const avail = Number.isFinite(raw) ? Number(raw) : 0;
-      map.set(label, Math.max(0, avail));
+      map.set(normDash(label), Math.max(0, avail));
+      rawByWin[label] = v || {};
     }
   }
-  return map;
+  return { map, rawByWin };
 }
+
 function requestedQty(){
   return cart.reduce((s,i)=> s + (parseInt(i.quantity||0,10) || 0), 0) || 1;
 }
+
+// --- UPDATED: use normalized window lookup during preflight
 async function preflightCapacity(dateStr, windowLabel, needQty){
   try{
     if (!dateStr || !windowLabel) return true;
     const data = await fetchAvailability(dateStr);
-    const map = normalizeAvailability(data);
-    if (!map.has(windowLabel)) return true;
-    const left = map.get(windowLabel);
+    const { map } = normalizeAvailability(data);
+    const key = normDash(windowLabel);
+    if (!map.has(key)) return true;
+    const left = map.get(key);
     return left >= needQty;
   }catch{
     return true;
   }
 }
+
 function setupTimeOptions(){
   if (!$deliveryTime) return;
   Array.from($deliveryTime.options).forEach(opt => {
@@ -181,22 +199,61 @@ function selectedWindowBase(){
   const opt = $deliveryTime.selectedOptions[0];
   return (opt ? (opt.dataset.base || opt.value || opt.textContent) : '').trim();
 }
+
+// --- NEW: render per-driver availability note below the select
+function renderPerDriverNote(rawByWin){
+  if (!$deliveryTime) return;
+  let note = document.getElementById('per-driver-note');
+  if (!note) {
+    note = document.createElement('div');
+    note.id = 'per-driver-note';
+    note.className = 'per-driver-note';
+    // lightweight inline style so you don’t have to change CSS right now
+    note.style.marginTop = '.5rem';
+    note.style.fontSize = '.9rem';
+    note.style.opacity = '0.85';
+    $deliveryTime.parentNode.appendChild(note);
+  }
+
+  const rows = [];
+  // Preserve option order when listing rows (feels more intuitive than Object.entries order)
+  Array.from($deliveryTime.options).forEach(op => {
+    const base = (op.dataset.base || op.value || op.textContent).trim();
+    const info = rawByWin[base] || rawByWin[Object.keys(rawByWin).find(k => normDash(k) === normDash(base))];
+    if (!info) return;
+
+    const drivers = info.drivers || {};
+    const per = Object.entries(drivers).map(([d,v]) => {
+      const cap = Number(v.capacity || 0);
+      const cur = Number(v.current || 0);
+      const rem = Math.max(0, cap - cur);
+      return `${d}: ${rem}`;
+    }).join(' · ');
+
+    rows.push(`<div><strong>${base}</strong> — ${per || '—'}</div>`);
+  });
+
+  const title = `<div style="font-weight:600;margin-bottom:.25rem">Driver availability</div>`;
+  note.innerHTML = title + (rows.join('') || '<div>—</div>');
+}
+
 async function refreshAvailability(){
   if (!$deliveryTime || !$deliveryDate) return;
   const date = $deliveryDate.value;
   if (!date) return;
   try{
     const data = await fetchAvailability(date);
-    const map = normalizeAvailability(data);
+    const { map, rawByWin } = normalizeAvailability(data);
     const need = requestedQty();
 
     Array.from($deliveryTime.options).forEach(opt => {
       if (!opt.value) return;
       const base = (opt.dataset.base || opt.value || opt.textContent).trim();
-      const avail = map.has(base) ? map.get(base) : null;
+      const avail = map.has(normDash(base)) ? map.get(normDash(base)) : null;
       if (avail != null){
         const isFullForUs = avail < need;
         opt.disabled = isFullForUs;
+        // Use EN DASH in the UI for aesthetics; logic uses normalized map
         opt.textContent = isFullForUs ? `${base} — Full` : `${base}${avail>=0 ? ` — ${avail} left` : ''}`;
       } else {
         opt.disabled = false;
@@ -208,12 +265,16 @@ async function refreshAvailability(){
     if (sel && sel.disabled) $deliveryTime.value = '';
 
     const chosen = selectedWindowBase();
-    const left = chosen && map.has(chosen) ? map.get(chosen) : null;
+    const left = (chosen && map.has(normDash(chosen))) ? map.get(normDash(chosen)) : null;
     if ($slotLeft){
       $slotLeft.textContent = (chosen && left != null)
         ? `${left} slot${left===1?'':'s'} left for ${chosen}`
         : '';
     }
+
+    // --- NEW: show per-driver lines under the select
+    renderPerDriverNote(rawByWin);
+
   } catch(e){
     if ($slotLeft) $slotLeft.textContent = '';
   }

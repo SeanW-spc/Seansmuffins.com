@@ -368,3 +368,5 @@ button, .btn { touch-action: manipulation; }
 .product.card{ overflow:hidden; }
 /* Disabled delivery windows appear dim */
 #delivery-time option[disabled]{ color:#a0a4aa; }
+.per-driver-note { margin-top:.5rem; font-size:.9rem; opacity:.85; }
+.per-driver-note .note-title { font-weight:600; margin-bottom:.25rem; }
