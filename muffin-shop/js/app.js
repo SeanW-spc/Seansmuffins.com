@@ -1,14 +1,9 @@
-/* Sean’s Muffins — app.js (FULL FILE, mobile nav fix, subs disabled, cart + checkout) */
-
-/* ============ Tiny helpers ============ */
 const $  = (sel, root=document) => root.querySelector(sel);
 const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
 const on = (el, ev, fn, opts) => el && el.addEventListener(ev, fn, opts);
 
-/* Footer year */
 const y = $('#y'); if (y) y.textContent = new Date().getFullYear();
 
-/* Smooth scroll for in-page anchors */
 $$('a[href^="#"]').forEach(a => {
   a.addEventListener('click', e => {
     const target = document.querySelector(a.getAttribute('href'));
@@ -19,36 +14,14 @@ $$('a[href^="#"]').forEach(a => {
   });
 });
 
-/* ============ Mobile nav (“waffle”) ============ */
 (function mobileNav(){
   const navToggle = $('.nav-toggle');
   const nav = $('#primary-nav');
-
-  function closeNav(){
-    if (!navToggle || !nav) return;
-    navToggle.setAttribute('aria-expanded', 'false');
-    nav.classList.remove('open');
-  }
-  function openNav(){
-    if (!navToggle || !nav) return;
-    navToggle.setAttribute('aria-expanded', 'true');
-    nav.classList.add('open');
-  }
-
-  on(navToggle, 'click', () => {
-    const expanded = navToggle.getAttribute('aria-expanded') === 'true';
-    if (expanded) closeNav(); else openNav();
-  });
-
-  on(nav, 'click', (e) => {
-    const t = e.target;
-    if (t && t.tagName === 'A') closeNav();
-  });
-
-  on(document, 'keydown', (e) => {
-    if (e.key === 'Escape') closeNav();
-  });
-
+  function closeNav(){ if (!navToggle || !nav) return; navToggle.setAttribute('aria-expanded', 'false'); nav.classList.remove('open'); }
+  function openNav(){ if (!navToggle || !nav) return; navToggle.setAttribute('aria-expanded', 'true'); nav.classList.add('open'); }
+  on(navToggle, 'click', () => { const expanded = navToggle.getAttribute('aria-expanded') === 'true'; if (expanded) closeNav(); else openNav(); });
+  on(nav, 'click', (e) => { const t = e.target; if (t && t.tagName === 'A') closeNav(); });
+  on(document, 'keydown', (e) => { if (e.key === 'Escape') closeNav(); });
   on(document, 'click', (e) => {
     if (!navToggle || !nav) return;
     const expanded = navToggle.getAttribute('aria-expanded') === 'true';
@@ -58,7 +31,6 @@ $$('a[href^="#"]').forEach(a => {
   });
 })();
 
-/* ============ Toasts + a11y live ============ */
 const a11yLive = $('#a11y-live');
 const toastHost = $('#toast');
 let toastTimer = null;
@@ -77,7 +49,6 @@ function toast(msg, ms=2200){
   }, ms);
 }
 
-/* ============ Cart state ============ */
 const CART_KEY = 'sm_cart_v1';
 let cart = [];
 
@@ -96,15 +67,23 @@ if (bc){
   };
 }
 
+function sanitizeCartItems(arr){
+  return (Array.isArray(arr) ? arr : []).map(i => ({
+    ...i,
+    quantity: Math.max(1, parseInt(i.quantity ?? 1, 10) || 1)
+  }));
+}
+
 function loadCart(){
   try {
     const raw = localStorage.getItem(CART_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    cart = Array.isArray(parsed) ? parsed : [];
+    cart = sanitizeCartItems(parsed);
   } catch { cart = []; }
 }
 function saveCart(){
   try {
+    cart = sanitizeCartItems(cart);
     localStorage.setItem(CART_KEY, JSON.stringify(cart));
     if (bc) bc.postMessage({ type:'cart', from:CLIENT_ID, cart: cart.map(i => ({...i})) });
   } catch {}
@@ -113,7 +92,6 @@ function cartItemsTotal(){
   return cart.reduce((n,i)=> n + (parseInt(i.quantity||0,10) || 0), 0);
 }
 
-/* Pending order (for thank-you) */
 const PENDING_KEY = 'sm_pending_order';
 function rememberPendingOrder(payload){
   try { localStorage.setItem(PENDING_KEY, JSON.stringify(payload || {})); } catch {}
@@ -126,7 +104,6 @@ function readPendingOrder(){
 }
 function clearPendingOrder(){ try{ localStorage.removeItem(PENDING_KEY); }catch{} }
 
-/* ============ Cart UI (DOM) ============ */
 const $cartOpen   = $('#cart-button');
 const $cartClose  = $('#cart-close');
 const $cartDrawer = $('#cart-drawer');
@@ -139,15 +116,15 @@ const $cartCheckout = $('#cart-checkout');
 const $deliveryDate = $('#delivery-date');
 const $deliveryTime = $('#delivery-time');
 const $orderNotes = $('#order-notes');
+const $slotLeft = $('#slot-left');
 
-/* ---- Delivery date default + slot availability ---- */
 function fmtDateInput(d){
   const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), dd = String(d.getDate()).padStart(2,'0');
   return `${y}-${m}-${dd}`;
 }
 function addDays(d, n){ const x = new Date(d); x.setDate(x.getDate()+n); x.setHours(0,0,0,0); return x; }
 function computeDefaultDeliveryDate(now=new Date()){
-  const cutoffH = 20, cutoffM = 30; // 8:30 PM
+  const cutoffH = 20, cutoffM = 30;
   const afterCutoff = (now.getHours()>cutoffH) || (now.getHours()===cutoffH && now.getMinutes()>=cutoffM);
   return addDays(now, afterCutoff ? 2 : 1);
 }
@@ -177,23 +154,18 @@ function normalizeAvailability(data){
 function requestedQty(){
   return cart.reduce((s,i)=> s + (parseInt(i.quantity||0,10) || 0), 0) || 1;
 }
-
-/* NEW: client-side capacity preflight before checkout */
 async function preflightCapacity(dateStr, windowLabel, needQty){
   try{
-    if (!dateStr || !windowLabel) return true; // let server validate
+    if (!dateStr || !windowLabel) return true;
     const data = await fetchAvailability(dateStr);
     const map = normalizeAvailability(data);
-    if (!map.has(windowLabel)) return true; // unknown label -> let server validate
+    if (!map.has(windowLabel)) return true;
     const left = map.get(windowLabel);
     return left >= needQty;
   }catch{
-    // If we can't verify, let the server decide.
     return true;
   }
 }
-
-/* NEW: keep stable values for <option> and remember original labels */
 function setupTimeOptions(){
   if (!$deliveryTime) return;
   Array.from($deliveryTime.options).forEach(opt => {
@@ -204,7 +176,11 @@ function setupTimeOptions(){
     }
   });
 }
-
+function selectedWindowBase(){
+  if (!$deliveryTime) return '';
+  const opt = $deliveryTime.selectedOptions[0];
+  return (opt ? (opt.dataset.base || opt.value || opt.textContent) : '').trim();
+}
 async function refreshAvailability(){
   if (!$deliveryTime || !$deliveryDate) return;
   const date = $deliveryDate.value;
@@ -227,10 +203,19 @@ async function refreshAvailability(){
         opt.textContent = base;
       }
     });
+
     const sel = $deliveryTime.selectedOptions[0];
     if (sel && sel.disabled) $deliveryTime.value = '';
+
+    const chosen = selectedWindowBase();
+    const left = chosen && map.has(chosen) ? map.get(chosen) : null;
+    if ($slotLeft){
+      $slotLeft.textContent = (chosen && left != null)
+        ? `${left} slot${left===1?'':'s'} left for ${chosen}`
+        : '';
+    }
   } catch(e){
-    // Availability fetch failed; leave options as-is
+    if ($slotLeft) $slotLeft.textContent = '';
   }
 }
 
@@ -277,7 +262,7 @@ function renderCart(){
           </div>
           <div class="ci-qty">
             <button class="qty dec" aria-label="Decrease">−</button>
-            <input class="qty-input" inputmode="numeric" pattern="[0-9]*" value="\${item.quantity||1}" />
+            <input class="qty-input" inputmode="numeric" pattern="[0-9]*" value="${item.quantity||1}" />
             <button class="qty inc" aria-label="Increase">+</button>
             <button class="qty remove" aria-label="Remove">✕</button>
           </div>`;
@@ -322,7 +307,6 @@ on($cartClear, 'click', () => {
   toast('Cart cleared');
 });
 
-/* ============ Product buttons ============ */
 let _lastTouchTs = 0;
 window.addEventListener('touchend', () => { _lastTouchTs = Date.now(); }, true);
 function onTap(el, handler){
@@ -344,7 +328,6 @@ function initProductButtons(){
       const name  = btn.getAttribute('data-name') || 'Muffin Box';
       const qty   = parseInt(btn.getAttribute('data-qty')||'1',10) || 1;
       if (!price){ toast('Missing price id'); return; }
-
       const idx = cart.findIndex(i => i.price === price);
       if (idx >= 0){
         cart[idx].quantity = (parseInt(cart[idx].quantity||0,10) || 0) + qty;
@@ -367,11 +350,9 @@ function initProductButtons(){
         return;
       }
       if (!price){ toast('Missing price id'); return; }
-
       const idx = cart.findIndex(i => i.price === price);
       if (idx >= 0) cart[idx].quantity = (parseInt(cart[idx].quantity||0,10) || 0) + qty;
       else cart.push({ price, name, quantity: qty });
-
       saveCart(); renderCart(); updateCartBadge(); openCart();
       toast(`Added ${qty} × ${name} — pick a delivery time to checkout.`);
       if ($deliveryDate) $deliveryDate.focus();
@@ -379,7 +360,6 @@ function initProductButtons(){
   });
 }
 
-/* ============ Checkout ============ */
 async function createCheckoutSession(payload){
   const resp = await fetch('/api/create-checkout-session', {
     method: 'POST',
@@ -392,7 +372,7 @@ async function createCheckoutSession(payload){
     throw new Error(err);
   }
   const data = await resp.json();
-  return data; // expects { id } or { url }
+  return data;
 }
 
 on($cartCheckout, 'click', async () => {
@@ -401,11 +381,9 @@ on($cartCheckout, 'click', async () => {
     const date  = $deliveryDate?.value || '';
     const win   = $deliveryTime?.value || '';
     const notes = ($orderNotes?.value || '').trim();
-
     if (!date){ toast('Please choose a delivery date'); $deliveryDate?.focus(); return; }
     if (!win){  toast('Please choose a delivery window'); $deliveryTime?.focus(); return; }
 
-    /* NEW: block checkout if we exceed remaining capacity */
     const need = requestedQty();
     const ok = await preflightCapacity(date, win, need);
     if (!ok){
@@ -452,7 +430,6 @@ on($cartCheckout, 'click', async () => {
       };
 
       toast(map[errCode] || 'Checkout failed. Please try again.');
-      // NEW: refresh UI if the server says the slot is full now
       if (['window_full','capacity_full','slots_reservation_failed'].includes(errCode)){
         await refreshAvailability();
       }
@@ -484,12 +461,10 @@ on($cartCheckout, 'click', async () => {
       stripe_config: 'Payment system is being configured. Please try again shortly.',
       stripe_error: 'Payment processor error. Please try again.'
     };
-
     toast(map[msg] || 'Checkout failed. Please try again.');
   }
 });
 
-/* ============ Thank-you hydration (optional) ============ */
 function renderThankYou(){
   const host = $('#thank-you-summary');
   if (!host) return;
@@ -526,7 +501,6 @@ function renderThankYou(){
   setTimeout(clearPendingOrder, 60_000);
 }
 
-/* ============ Optional forms ============ */
 const $voteForm = $('#vote-form');
 if ($voteForm){
   on($voteForm, 'submit', async (e) => {
@@ -545,7 +519,6 @@ if ($voteForm){
   });
 }
 
-/* ============ Init ============ */
 (function init(){
   loadCart();
   renderCart();
@@ -560,6 +533,8 @@ if ($voteForm){
     $deliveryDate.min = defStr;
     on($deliveryDate, 'change', () => { refreshAvailability(); });
   }
+
+  on($deliveryTime, 'change', refreshAvailability);
 
   setupTimeOptions();
   refreshAvailability();
