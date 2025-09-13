@@ -1,50 +1,71 @@
-// api/notify-customer.js
-// Sends an SMS to a customer. Auth: X-Admin-Token or Authorization: Bearer <token>
-export default async function handler(req, res){
-  // CORS
-  if (req.method === 'OPTIONS'){
-    res.setHeader('Access-Control-Allow-Origin','*');
-    res.setHeader('Access-Control-Allow-Headers','Content-Type, Authorization, X-Admin-Token');
-    return res.status(204).end();
-  }
-  res.setHeader('Access-Control-Allow-Origin','*');
-  if (req.method !== 'POST'){
-    res.setHeader('Allow','POST,OPTIONS');
-    return res.status(405).json({ ok:false, error:'method_not_allowed' });
-  }
+// /api/notify-customer.js
+// Sends SMS via Twilio if env is configured; otherwise returns a controlled
+// "twilio_unavailable" error so the client fallback (clipboard + sms:) kicks in.
 
-  // Auth
-  const auth = (req.headers.authorization || '').trim();
-  const bearer = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7) : '';
-  const headerToken = (req.headers['x-admin-token'] || '').toString();
-  const token = bearer || headerToken || '';
-  if (!process.env.ADMIN_API_TOKEN || token !== process.env.ADMIN_API_TOKEN){
-    return res.status(401).json({ ok:false, error:'unauthorized' });
+export default async function handler(req, res) {
+  try {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      return res.status(405).json({ ok: false, error: 'method_not_allowed' });
+    }
+
+    // -------- Admin auth (same pattern as your other admin endpoints)
+    const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const token = bearer || (req.headers['x-admin-token'] || '').trim();
+    const allowed = (process.env.ADMIN_API_TOKEN || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (!token || !allowed.length || !allowed.includes(token)) {
+      return res.status(401).json({ ok: false, error: 'unauthorized' });
+    }
+
+    const { to, message } = req.body || {};
+    if (!to || !message) {
+      return res.status(400).json({ ok: false, error: 'missing_fields' });
+    }
+
+    // -------- Normalize US numbers to E.164 (+1XXXXXXXXXX)
+    const digits = String(to).replace(/\D+/g, '');
+    const e164 = digits.length === 10 ? `+1${digits}` : (digits.startsWith('1') && digits.length === 11 ? `+${digits}` : (to.startsWith('+') ? to : null));
+    if (!e164) {
+      return res.status(400).json({ ok: false, error: 'invalid_phone' });
+    }
+
+    // -------- If Twilio not ready, trigger client fallback cleanly
+    const SID   = process.env.TWILIO_ACCOUNT_SID || '';
+    const TOKEN = process.env.TWILIO_AUTH_TOKEN || '';
+    const FROM  = process.env.TWILIO_FROM || ''; // e.g. +18335551234 (toll-free) or +13335551234 (A2P-registered 10DLC)
+
+    if (!SID || !TOKEN || !FROM) {
+      // Deliberately use 400 so the UI's try/catch fallback kicks in.
+      return res.status(400).json({
+        ok: false,
+        error: 'twilio_unavailable',
+        hint: 'Clipboard + sms: fallback will be used on the client.',
+        clipboard: `${e164}\n\n${message}`,
+        sms_url: `sms:${encodeURIComponent(e164)}?&body=${encodeURIComponent(message)}`
+      });
+    }
+
+    // -------- Send via Twilio REST API
+    const auth = Buffer.from(`${SID}:${TOKEN}`).toString('base64');
+    const body = new URLSearchParams({ To: e164, From: FROM, Body: message });
+
+    const r = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${SID}/Messages.json`, {
+      method: 'POST',
+      headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body
+    });
+
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      // Bubble a controlled error so the UI uses fallback.
+      const code = (j && j.code) ? `twilio_${j.code}` : 'twilio_error';
+      return res.status(400).json({ ok: false, error: code, detail: j && j.message });
+    }
+
+    // Success
+    return res.status(200).json({ ok: true, sid: j.sid || null, status: j.status || 'queued' });
+  } catch (err) {
+    console.error('notify-customer error', err);
+    return res.status(500).json({ ok: false, error: 'server_error' });
   }
-
-  // Read body
-  const buf = await new Response(req.body).text();
-  let body; try { body = JSON.parse(buf || '{}'); } catch { body = {}; }
-  const to = (body.to || '').toString().trim();
-  const msg = (body.message || '').toString().trim();
-  if (!to || !msg) return res.status(400).json({ ok:false, error:'missing_fields' });
-
-  // Twilio
-  const sid = process.env.TWILIO_ACCOUNT_SID;
-  const tokenTw = process.env.TWILIO_AUTH_TOKEN;
-  const from = process.env.TWILIO_FROM;
-  if (!sid || !tokenTw || !from) return res.status(500).json({ ok:false, error:'twilio_config' });
-
-  const b = new URLSearchParams({ To: to, From: from, Body: msg });
-  const r = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
-    method:'POST',
-    headers:{ 'Authorization':'Basic ' + btoa(`${sid}:${tokenTw}`), 'Content-Type':'application/x-www-form-urlencoded' },
-    body:b.toString()
-  });
-  if (!r.ok){
-    const t = await r.text().catch(()=> '');
-    return res.status(502).json({ ok:false, error:'twilio_failed', detail:t.slice(0,200) });
-  }
-  const j = await r.json();
-  return res.status(200).json({ ok:true, sid: j.sid });
 }
