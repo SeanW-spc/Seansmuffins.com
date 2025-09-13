@@ -2,6 +2,7 @@
 // Secure JSON feed of orders for a given date/status + CORS.
 // Auth: Authorization: Bearer <ADMIN_API_TOKEN>  (also supports x-admin-token and ?token=)
 // Field-name tolerant (snake_case OR Title Case). Falls back to client-side filtering/sorting.
+// Also tolerant of DD-MM-YYYY vs YYYY-MM-DD values.
 
 function withCors(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -20,6 +21,38 @@ function getAdminToken(req) {
   if (q) return q;
   try { if (req.body && typeof req.body === 'object' && req.body.token) return String(req.body.token); } catch {}
   return '';
+}
+
+// --- Date helpers (tolerant) ---
+function normalizeYmd(input) {
+  if (!input) return '';
+  if (input instanceof Date) return input.toISOString().slice(0, 10);
+  const s = String(input).trim();
+
+  // ISO already
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+
+  // DD-MM-YYYY
+  const dmy = s.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`;
+
+  // MM/DD/YYYY or DD/MM/YYYY (assume US if ambiguous)
+  const slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slash) {
+    let mm = Number(slash[1]), dd = Number(slash[2]), yy = Number(slash[3]);
+    if (mm > 12 && dd <= 12) { // looks like DD/MM/YYYY
+      [dd, mm] = [mm, dd];
+    }
+    return `${yy}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`;
+  }
+
+  // Fallback: try Date()
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+
+  // Last resort: first 10 chars (lets caller try to match)
+  return s.slice(0, 10);
 }
 
 export default async function handler(req, res) {
@@ -45,12 +78,23 @@ export default async function handler(req, res) {
 
     // Inputs
     const today = new Date().toISOString().slice(0,10);
-    const date = String(req.query.date || today);
+    const reqDate = String(req.query.date || today);
+    const normalizedDate = normalizeYmd(reqDate);
     const statusFilter = (req.query.status ? String(req.query.status) : '').trim();
+    const debug = String(req.query.debug || '') === '1';
 
-    // --- tolerant date filtering (server-side if possible, else client-side) ---
-    const dateFieldCandidates = ['delivery_date', 'Delivery Date', 'Date'];
-    const records = await listAirtableByDateTolerant(apiUrl, headers, date, dateFieldCandidates);
+    // Candidate field names (broad tolerance)
+    const dateFieldCandidates = [
+      'delivery_date','Delivery Date','Date','deliver_date','deliver_ date','Deliver Date','Deliver_Date'
+    ];
+    const winNames     = ['preferred_window','Preferred Window','Window'];
+    const createdNames = ['created_at','Created','Created At'];
+    const statusNames  = ['status','Status'];
+
+    // Pull records: try server-side equality on each candidate; if none returns >0,
+    // fetch all and filter locally with normalizeYmd.
+    const { records, usedField, tried, serverCount } =
+      await listAirtableByDateTolerant(apiUrl, headers, normalizedDate, dateFieldCandidates);
 
     // Helper to select first present field
     const pick = (fields, names, fallback='') => {
@@ -60,12 +104,13 @@ export default async function handler(req, res) {
       return fallback;
     };
 
-    // Client-side filter by date (in case we had to fall back to unfiltered fetch)
-    const sameDate = (v) => String(v || '').slice(0,10) === date;
-    const filteredByDate = records.filter(r => sameDate(pick(r.fields || {}, dateFieldCandidates)));
+    // Client-side filter by date (handles DD-MM-YYYY values in Airtable, formula text, etc.)
+    const filteredByDate = records.filter(r => {
+      const raw = pick(r.fields || {}, dateFieldCandidates);
+      return normalizeYmd(raw) === normalizedDate;
+    });
 
-    // Optional status filter (tolerant)
-    const statusNames = ['status', 'Status'];
+    // Optional status filter (case/tolerant)
     const filtered = statusFilter
       ? filteredByDate.filter(r => {
           const v = String(pick(r.fields || {}, statusNames, '')).toLowerCase();
@@ -74,8 +119,6 @@ export default async function handler(req, res) {
       : filteredByDate;
 
     // Sort locally: window then created
-    const winNames = ['preferred_window', 'Preferred Window', 'Window'];
-    const createdNames = ['created_at', 'Created', 'Created At'];
     filtered.sort((a,b) => {
       const fa = a.fields || {}, fb = b.fields || {};
       const wa = String(pick(fa, winNames, '')), wb = String(pick(fb, winNames, ''));
@@ -90,7 +133,7 @@ export default async function handler(req, res) {
         id: r.id,
         delivery_date:     pick(f, ['delivery_date','Delivery Date','Date'], ''),
         preferred_window:  pick(f, ['preferred_window','Preferred Window','Window'], ''),
-        status:            pick(f, ['status','Status'], ''),
+        status:            pick(f, statusNames, ''),
         delivery_time:     pick(f, ['delivery_time','Delivery Time'], ''),
         route_position:    pick(f, ['route_position','Route Position'], null),
         customer_name:     pick(f, ['customer_name','Customer Name','Name'], ''),
@@ -101,13 +144,13 @@ export default async function handler(req, res) {
         total:             pick(f, ['total','Total'], null),
         items:             pick(f, ['items','Items'], ''),
         stripe_session_id: pick(f, ['stripe_session_id','Stripe Session ID','Session ID'], ''),
-        created_at:        pick(f, ['created_at','Created','Created At'], ''),
+        created_at:        pick(f, createdNames, ''),
         driver:            pick(f, ['driver','Driver'], '')
       };
     });
 
     // --- Driver suggestions (read-only; real write happens on approve) ---
-    const suggestionResult = await suggestDriversForDate(date, orders);
+    const suggestionResult = await suggestDriversForDate(normalizedDate, orders);
     const drivers = suggestionResult.drivers;
     const byKey = suggestionResult.byKey;
 
@@ -116,7 +159,27 @@ export default async function handler(req, res) {
       suggested_driver: o.driver ? '' : (byKey[o.id] || '')
     }));
 
-    return res.status(200).json({ ok:true, date, count: enriched.length, orders: enriched, drivers });
+    const payload = { ok:true, date: normalizedDate, count: enriched.length, orders: enriched, drivers };
+
+    if (debug) {
+      payload.debug = {
+        requestedDate: reqDate,
+        normalizedDate,
+        usedField,
+        triedFields: tried,
+        serverSideCount: serverCount,
+        clientSideCount: enriched.length,
+        sampleDates: records.slice(0,5).map(r => ({
+          id: r.id,
+          raw: dateFieldCandidates.reduce((acc, k) => (k in (r.fields||{}) ? (acc || r.fields[k]) : acc), ''),
+          normalized: normalizeYmd(
+            dateFieldCandidates.reduce((acc, k) => (k in (r.fields||{}) ? (acc || r.fields[k]) : acc), '')
+          )
+        }))
+      };
+    }
+
+    return res.status(200).json(payload);
   } catch (err) {
     console.error('orders-feed error', err?.message || err);
     return res.status(500).json({ ok:false, error:'server_error' });
@@ -125,21 +188,31 @@ export default async function handler(req, res) {
 
 /* ---------------- Airtable listing (tolerant) ---------------- */
 
-async function listAirtableByDateTolerant(baseUrl, headers, date, dateFieldCandidates){
-  // Try server-side filtering with each candidate field; on failure, fall back to no filter.
+async function listAirtableByDateTolerant(baseUrl, headers, ymd, dateFieldCandidates){
+  const tried = [];
+  let usedField = null;
+  let serverCount = 0;
+
+  // Try each candidate; if any returns >0, use it.
   for (const field of dateFieldCandidates) {
+    tried.push(field);
     try {
-      const f = `AND({${field}}='${date}')`;
+      const f = `AND({${field}}='${ymd}')`;
       const recs = await listAirtable(baseUrl, headers, f);
-      // If this worked, use it.
-      return recs;
-    } catch (e) {
-      // Unknown field name or formula error – try next candidate
-      continue;
+      if (Array.isArray(recs) && recs.length > 0) {
+        usedField = field;
+        serverCount = recs.length;
+        return { records: recs, usedField, tried, serverCount };
+      }
+    } catch {
+      // ignore formula/field errors and try next candidate
     }
   }
-  // Fallback: fetch without filter and let caller filter client-side.
-  try { return await listAirtable(baseUrl, headers, null); } catch { return []; }
+
+  // If none returned >0, fetch unfiltered and let caller filter locally.
+  const all = await listAirtable(baseUrl, headers, null);
+  serverCount = 0;
+  return { records: all, usedField, tried, serverCount };
 }
 
 async function listAirtable(baseUrl, headers, filterByFormula /* or null */) {
@@ -223,7 +296,7 @@ async function loadDriverUsage(base, key, slotsTable, date, window){
   const filter = [
     `{Date}='${date}'`,
     `{Window}='${window}'`,
-    `OR({Status}='confirmed', AND({Status}='pending', IS_AFTER({Updated}, '${sinceIso}')))`,
+    `OR({Status}='confirmed', AND({Status}='pending', IS_AFTER({Updated}, '${sinceIso}')))` ,
     'NOT({AdminHold}=1)'
   ].join(',');
   const formula = `AND(${filter})`;
