@@ -1,5 +1,5 @@
 // api/create-checkout-session.js
-// Checks capacity (incl. SlotCaps override), optionally enforces per-driver caps,
+// Checks capacity (incl. DriverCaps sum override), optionally enforces per-driver caps,
 // holds a slot, then creates a Stripe Checkout Session.
 
 import Stripe from 'stripe';
@@ -7,6 +7,7 @@ const stripeKey = process.env.STRIPE_SECRET_KEY ?? '';
 const stripe = new Stripe(stripeKey, { apiVersion: '2024-06-20' });
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://www.seansmuffins.com';
+const FRESH_MINUTES = Number(process.env.PENDING_FRESH_MIN || 60);
 
 // If true, continue to Stripe even if the Slots "pending" reservation fails outright
 const SOFT_RES =
@@ -53,7 +54,8 @@ export default async function handler(req, res) {
 
     for (const it of items) {
       if (!it || typeof it.price !== 'string' || !it.price) {
-        return res.status(400).json({ error: 'missing_price' });
+        // Align with client UI
+        return res.status(400).json({ error: 'invalid_price' });
       }
     }
 
@@ -69,9 +71,9 @@ export default async function handler(req, res) {
       ? items.reduce((n, it) => n + Number(it?.quantity || 1), 0)
       : 1;
 
-    // Total window capacity (existing logic)
+    // Capacity = sum(DriverCaps) if any exist; else SlotCaps override; else default
     const cap = await resolveCapacity(deliveryDate, timeWindow);
-    const cur = await countOccupied(deliveryDate, timeWindow);
+    const cur = await countOccupied(deliveryDate, timeWindow); // includes AdminHold and fresh pending
     if (cur + qtyNeeded > cap) {
       const suggestions = await findAlternativeWindows(deliveryDate, timeWindow, qtyNeeded);
       return res.status(409).json({ error: 'window_full', suggestions });
@@ -98,17 +100,11 @@ export default async function handler(req, res) {
       console.error('Slots pending create threw:', err);
     }
     if (!reservationId) {
-      if (SOFT_RES) {
+      if (SOFT_RES || FAIL_OPEN_ON_AIRTABLE_ERROR) {
         reservationId = `noop_${Date.now().toString(36)}`;
-        console.warn('Slots reservation failed; proceeding due to SOFT_RESERVATIONS.');
+        console.warn('Slots reservation failed; proceeding (soft/fail-open).');
       } else {
-        // As a temporary helper while Airtable is being wired:
-        if (FAIL_OPEN_ON_AIRTABLE_ERROR) {
-          reservationId = `noop_${Date.now().toString(36)}`;
-          console.warn('Slots reservation failed; TEMP fail-open enabled. Set FAIL_OPEN_ON_AIRTABLE_ERROR=0 to disable.');
-        } else {
-          return res.status(502).json({ error: 'slots_reservation_failed' });
-        }
+        return res.status(502).json({ error: 'slots_reservation_failed' });
       }
     }
 
@@ -170,7 +166,7 @@ function normalizeWindow(raw) {
   return getWindows().find(w => w.startsWith(start)) || '';
 }
 
-// NEW: pick a driver with remaining capacity for (date, timeWindow, qtyNeeded)
+// Driver pick with remaining capacity for (date, window, qtyNeeded)
 async function pickDriver(date, window, qtyNeeded) {
   const key = process.env.AIRTABLE_API_KEY, base = process.env.AIRTABLE_BASE_ID;
   if (!key || !base) return { driver: null, enforced: false };
@@ -192,8 +188,8 @@ async function pickDriver(date, window, qtyNeeded) {
   const drivers = Object.keys(caps);
   if (!drivers.length) return { driver: null, enforced: false };
 
-  // 2) load current usage per driver
-  const sinceIso = new Date(Date.now() - Number(process.env.PENDING_FRESH_MIN || 60)*60*1000).toISOString();
+  // 2) load current usage per driver (exclude AdminHold, include fresh pending)
+  const sinceIso = new Date(Date.now() - FRESH_MINUTES*60*1000).toISOString();
   const filter = [
     `{Date}='${date}'`,
     `{Window}='${window}'`,
@@ -249,24 +245,54 @@ function getWindows() {
   return ['6:00–7:00 AM', '7:00–8:00 AM', '8:00–9:00 AM'];
 }
 
+// Capacity = sum(DriverCaps) if any exist; else SlotCaps override; else default
 async function resolveCapacity(date, win) {
   const defCap = Number(process.env.SLOT_CAPACITY_DEFAULT || 12);
   const base = process.env.AIRTABLE_BASE_ID;
   const key = process.env.AIRTABLE_API_KEY;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_SLOT_CAPS || 'SlotCaps');
   if (!base || !key) return defCap;
 
-  const u = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-  u.searchParams.set('filterByFormula', `AND({Date}='${date}', {Window}='${win}')`);
-  const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${key}` } });
-  if (!r.ok) return defCap;
-  const j = await r.json();
-  const rec = (j.records || [])[0];
-  if (!rec || rec.fields?.Capacity == null) return defCap;
-  const cap = Number(rec.fields.Capacity);
-  return Number.isFinite(cap) ? cap : defCap;
+  const slotTable   = encodeURIComponent(process.env.AIRTABLE_TABLE_SLOT_CAPS   || 'SlotCaps');
+  const driverTable = encodeURIComponent(process.env.AIRTABLE_TABLE_DRIVER_CAPS || 'DriverCaps');
+
+  // Slot override (optional)
+  let slotCap = null;
+  {
+    const u = new URL(`https://api.airtable.com/v0/${base}/${slotTable}`);
+    u.searchParams.set('filterByFormula', `AND({Date}='${date}', {Window}='${win}')`);
+    u.searchParams.set('maxRecords','1');
+    const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${key}` } });
+    if (r.ok){
+      const j = await r.json();
+      const rec = (j.records || [])[0];
+      if (rec && rec.fields?.Capacity != null){
+        const n = Number(rec.fields.Capacity);
+        slotCap = Number.isFinite(n) ? n : null;
+      }
+    }
+  }
+
+  // Per-driver caps (if present, they define total capacity)
+  let perDriverSum = 0, foundDriverCaps = false;
+  {
+    const f = encodeURIComponent(`AND({Date}='${date}',{Window}='${win}')`);
+    const u = `https://api.airtable.com/v0/${base}/${driverTable}?filterByFormula=${f}&pageSize=100`;
+    const r = await fetch(u, { headers:{ Authorization: `Bearer ${key}` } });
+    if (r.ok){
+      const j = await r.json();
+      for (const rec of (j.records || [])){
+        const n = Number(rec.fields?.Capacity || 0);
+        if (Number.isFinite(n)) { perDriverSum += n; foundDriverCaps = true; }
+      }
+    }
+  }
+
+  if (foundDriverCaps) return perDriverSum;
+  if (slotCap != null)  return slotCap;
+  return defCap;
 }
 
+// Confirmed + fresh pending + AdminHold
 async function countOccupied(date, win) {
   const base = process.env.AIRTABLE_BASE_ID;
   const key = process.env.AIRTABLE_API_KEY;
@@ -274,8 +300,8 @@ async function countOccupied(date, win) {
 
   const table = encodeURIComponent(process.env.AIRTABLE_TABLE_SLOTS || 'Slots');
   const u = new URL(`https://api.airtable.com/v0/${base}/${table}`);
-  const cutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // 60-min holds count
-  const formula = `AND({Date}='${date}', {Window}='${win}', OR({Status}='confirmed', AND({Status}='pending', IS_AFTER({Updated}, '${cutoff}'))))`;
+  const cutoff = new Date(Date.now() - FRESH_MINUTES*60*1000).toISOString();
+  const formula = `AND({Date}='${date}', {Window}='${win}', OR({Status}='confirmed', AND({Status}='pending', IS_AFTER({Updated}, '${cutoff}')), {AdminHold}=1))`;
   u.searchParams.set('filterByFormula', formula);
   u.searchParams.set('pageSize', '100');
 
@@ -319,7 +345,6 @@ async function createPendingReservation(date, win, qty, driver = null) {
     },
     body: JSON.stringify({
       records: [{ fields }],
-      // IMPORTANT: lets Airtable auto-add single-select options (e.g., "pending") etc.
       typecast: true
     })
   });
@@ -327,7 +352,6 @@ async function createPendingReservation(date, win, qty, driver = null) {
   if (!r.ok) {
     const txt = await safeText(r);
     console.error('Slots pending create failed', txt);
-    // TEMP: if Airtable schema/table isn't ready yet, let checkout proceed
     if (FAIL_OPEN_ON_AIRTABLE_ERROR) {
       return `noop_${Date.now().toString(36)}`;
     }

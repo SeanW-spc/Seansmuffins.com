@@ -40,18 +40,15 @@ $$('a[href^="#"]').forEach(a => {
     if (expanded) closeNav(); else openNav();
   });
 
-  // Close when a link is clicked (common mobile pattern)
   on(nav, 'click', (e) => {
     const t = e.target;
     if (t && t.tagName === 'A') closeNav();
   });
 
-  // Escape closes
   on(document, 'keydown', (e) => {
     if (e.key === 'Escape') closeNav();
   });
 
-  // Click outside (only on small screens)
   on(document, 'click', (e) => {
     if (!navToggle || !nav) return;
     const expanded = navToggle.getAttribute('aria-expanded') === 'true';
@@ -162,7 +159,6 @@ async function fetchAvailability(date){
 function normalizeAvailability(data){
   const map = new Map();
   if (!data) return map;
-  // Supports { windows: { "6:00–7:00 AM": {capacity,current,available}, ... } } OR array
   if (Array.isArray(data.windows)){
     for (const w of data.windows){
       const label = w.window || w.label || w.name;
@@ -182,14 +178,28 @@ function requestedQty(){
   return cart.reduce((s,i)=> s + (parseInt(i.quantity||0,10) || 0), 0) || 1;
 }
 
+/* NEW: client-side capacity preflight before checkout */
+async function preflightCapacity(dateStr, windowLabel, needQty){
+  try{
+    if (!dateStr || !windowLabel) return true; // let server validate
+    const data = await fetchAvailability(dateStr);
+    const map = normalizeAvailability(data);
+    if (!map.has(windowLabel)) return true; // unknown label -> let server validate
+    const left = map.get(windowLabel);
+    return left >= needQty;
+  }catch{
+    // If we can't verify, let the server decide.
+    return true;
+  }
+}
+
 /* NEW: keep stable values for <option> and remember original labels */
 function setupTimeOptions(){
   if (!$deliveryTime) return;
   Array.from($deliveryTime.options).forEach(opt => {
     const label = (opt.textContent || '').trim();
-    if (!opt.dataset.base) opt.dataset.base = label;          // remember original label
+    if (!opt.dataset.base) opt.dataset.base = label;
     if (!opt.hasAttribute('value') && label && opt.value === '') {
-      // only set if the option had no explicit value; skip placeholder with value=""
       opt.value = label;
     }
   });
@@ -205,19 +215,18 @@ async function refreshAvailability(){
     const need = requestedQty();
 
     Array.from($deliveryTime.options).forEach(opt => {
-      if (!opt.value) return; // skip placeholder
-      const base = (opt.dataset.base || opt.value || opt.textContent).trim(); // <-- stable base
+      if (!opt.value) return;
+      const base = (opt.dataset.base || opt.value || opt.textContent).trim();
       const avail = map.has(base) ? map.get(base) : null;
       if (avail != null){
         const isFullForUs = avail < need;
         opt.disabled = isFullForUs;
         opt.textContent = isFullForUs ? `${base} — Full` : `${base}${avail>=0 ? ` — ${avail} left` : ''}`;
       } else {
-        opt.disabled = false; // unknown window -> assume ok
+        opt.disabled = false;
         opt.textContent = base;
       }
     });
-    // If current selection is disabled, clear it
     const sel = $deliveryTime.selectedOptions[0];
     if (sel && sel.disabled) $deliveryTime.value = '';
   } catch(e){
@@ -235,10 +244,8 @@ function openCart(){
   $cartDrawer.setAttribute('aria-hidden','false');
   $cartDrawer.classList.add('open');
   if ($cartBackdrop) $cartBackdrop.classList.add('show');
-  // Lock page scroll while drawer is open (prevents background overlap/jank on mobile)
   document.documentElement.style.overflow = 'hidden';
   document.body.style.overflow = 'hidden';
-  // Ensure options reflect current capacity when user opens the cart
   setupTimeOptions();
   refreshAvailability();
 }
@@ -264,14 +271,13 @@ function renderCart(){
       cart.forEach((item, idx) => {
         const div = document.createElement('div');
         div.className = 'cart-item';
-        // Hide the Stripe price ID in the UI (only show item name + qty controls)
         div.innerHTML = `
           <div class="ci-info">
             <div class="ci-name">${item.name || 'Item'}</div>
           </div>
           <div class="ci-qty">
             <button class="qty dec" aria-label="Decrease">−</button>
-            <input class="qty-input" inputmode="numeric" pattern="[0-9]*" value="${item.quantity||1}" />
+            <input class="qty-input" inputmode="numeric" pattern="[0-9]*" value="\${item.quantity||1}" />
             <button class="qty inc" aria-label="Increase">+</button>
             <button class="qty remove" aria-label="Remove">✕</button>
           </div>`;
@@ -308,7 +314,6 @@ function renderCart(){
     }
   }
   updateCartBadge();
-  // Re-evaluate which windows are selectable based on current cart qty
   refreshAvailability();
 }
 on($cartClear, 'click', () => {
@@ -318,7 +323,6 @@ on($cartClear, 'click', () => {
 });
 
 /* ============ Product buttons ============ */
-/* Touch+click helper that avoids “ghost click” double-fires on mobile */
 let _lastTouchTs = 0;
 window.addEventListener('touchend', () => { _lastTouchTs = Date.now(); }, true);
 function onTap(el, handler){
@@ -328,13 +332,12 @@ function onTap(el, handler){
     handler(e);
   }, { passive: true });
   el.addEventListener('click', (e) => {
-    if (Date.now() - _lastTouchTs < 500) { e.preventDefault(); return; } // ignore ghost-click
+    if (Date.now() - _lastTouchTs < 500) { e.preventDefault(); return; }
     handler(e);
   });
 }
 
 function initProductButtons(){
-  // Add-to-cart
   $$('[data-add]').forEach(btn => {
     onTap(btn, () => {
       const price = btn.getAttribute('data-price');
@@ -353,7 +356,6 @@ function initProductButtons(){
     });
   });
 
-  // Buy-now (route through cart for date/window)
   $$('[data-buy-now]').forEach(btn => {
     onTap(btn, () => {
       const price = btn.getAttribute('data-price');
@@ -403,6 +405,16 @@ on($cartCheckout, 'click', async () => {
     if (!date){ toast('Please choose a delivery date'); $deliveryDate?.focus(); return; }
     if (!win){  toast('Please choose a delivery window'); $deliveryTime?.focus(); return; }
 
+    /* NEW: block checkout if we exceed remaining capacity */
+    const need = requestedQty();
+    const ok = await preflightCapacity(date, win, need);
+    if (!ok){
+      toast('That delivery window is full for your quantity. Please pick another window.');
+      await refreshAvailability();
+      $deliveryTime?.focus();
+      return;
+    }
+
     const payload = {
       mode: 'payment',
       items: cart.map(i => ({ price: i.price, quantity: parseInt(i.quantity||1,10) || 1 })),
@@ -426,6 +438,7 @@ on($cartCheckout, 'click', async () => {
       const map = {
         window_full: 'That delivery window is full. Please pick another window.',
         capacity_full: 'That delivery window is full. Please pick another window.',
+        driver_full: 'All drivers are booked for that window. Please pick another window.',
         invalid_window: 'Please choose a delivery window.',
         invalid_date: 'Please choose a valid delivery date.',
         subscription_disabled: 'Subscriptions are coming soon.',
@@ -439,12 +452,15 @@ on($cartCheckout, 'click', async () => {
       };
 
       toast(map[errCode] || 'Checkout failed. Please try again.');
+      // NEW: refresh UI if the server says the slot is full now
+      if (['window_full','capacity_full','slots_reservation_failed'].includes(errCode)){
+        await refreshAvailability();
+      }
       return;
     }
 
     const { id, url } = await resp.json();
 
-    // Clear cart to avoid dupes on back-nav
     cart = []; saveCart(); renderCart(); updateCartBadge();
 
     if (url){ window.location.href = url; return; }
@@ -461,12 +477,14 @@ on($cartCheckout, 'click', async () => {
     console.error('Checkout error', e);
     const msg = (e && e.message) ? e.message : '';
     const map = {
+      driver_full: 'All drivers are booked for that window. Please pick another window.',
       subscription_disabled: 'Subscriptions are coming soon.',
       invalid_price: 'That item is unavailable. Please refresh and try again.',
       stripe_key_mismatch: 'Payment system mode mismatch. Please try again shortly.',
       stripe_config: 'Payment system is being configured. Please try again shortly.',
       stripe_error: 'Payment processor error. Please try again.'
     };
+
     toast(map[msg] || 'Checkout failed. Please try again.');
   }
 });
@@ -535,7 +553,6 @@ if ($voteForm){
   initProductButtons();
   renderThankYou();
 
-  // Prefill date (next day before 8:30 PM; else day after) + min date
   if ($deliveryDate){
     const def = computeDefaultDeliveryDate();
     const defStr = fmtDateInput(def);
@@ -544,11 +561,9 @@ if ($voteForm){
     on($deliveryDate, 'change', () => { refreshAvailability(); });
   }
 
-  // Ensure stable option values and run first availability check
   setupTimeOptions();
   refreshAvailability();
 
-  // Muffin tapper (if present on this page)
   const $tapper = $('#muffin-tapper');
   if ($tapper){
     const $cnt = $('.mt-count', $tapper);
@@ -561,7 +576,6 @@ if ($voteForm){
     };
     $tapper.addEventListener('touchend', tap, { passive:true });
     $tapper.addEventListener('click', (e)=> {
-      // ignore ghost click after touch
       if (e.detail === 0) return;
       tap();
     });

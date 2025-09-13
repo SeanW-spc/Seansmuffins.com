@@ -1,6 +1,6 @@
 // api/stripe-webhook.js
 // Inserts into Orders with progressive fallbacks (no 'created' field sent).
-// Also confirms/expires Slot reservations.
+// Also confirms/expires Slot reservations, with defaults aligned to the rest of the stack.
 
 import Stripe from 'stripe';
 
@@ -43,7 +43,7 @@ export default async function handler(req, res) {
     if (event.type === 'checkout.session.completed') {
       const sessId = event.data.object.id;
       const session = await stripe.checkout.sessions.retrieve(sessId, { expand: ['line_items'] });
-      await upsertOrderWithFallbacks(session);
+      await upsertOrderWithFallbacks(session); // idempotent
       await markReservation(session?.metadata?.reservationId, 'confirmed', session?.id);
     } else if (event.type === 'checkout.session.expired') {
       const session = event.data.object;
@@ -60,13 +60,15 @@ export default async function handler(req, res) {
    Airtable: Slots
    =========================== */
 function hasSlotsEnv() {
-  return Boolean(process.env.AIRTABLE_API_KEY && process.env.AIRTABLE_BASE_ID && process.env.AIRTABLE_TABLE_SLOTS);
+  // Allow default table name like the rest of your API files
+  return Boolean(process.env.AIRTABLE_API_KEY && process.env.AIRTABLE_BASE_ID);
 }
+
 async function markReservation(reservationId, status, sessionId) {
-  if (!reservationId || !hasSlotsEnv()) return;
-  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_SLOTS);
-  const base = process.env.AIRTABLE_BASE_ID;
-  const url = `https://api.airtable.com/v0/${base}/${table}`;
+  if (!reservationId || reservationId.startsWith('noop_') || !hasSlotsEnv()) return;
+  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_SLOTS || 'Slots');
+  const base  = process.env.AIRTABLE_BASE_ID;
+  const url   = `https://api.airtable.com/v0/${base}/${table}`;
 
   // Find by ReservationId
   const findUrl = new URL(url);
@@ -84,6 +86,7 @@ async function markReservation(reservationId, status, sessionId) {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
+      typecast: true,
       records: [{
         id: rec.id,
         fields: {
@@ -98,10 +101,10 @@ async function markReservation(reservationId, status, sessionId) {
 }
 
 /* ===========================
-   Airtable: Orders (progressive fallbacks)
+   Airtable: Orders (progressive fallbacks + dedupe)
    =========================== */
 function hasOrdersEnv() {
-  return Boolean(process.env.AIRTABLE_API_KEY && process.env.AIRTABLE_BASE_ID && (process.env.AIRTABLE_TABLE_NAME || 'Orders'));
+  return Boolean(process.env.AIRTABLE_API_KEY && process.env.AIRTABLE_BASE_ID);
 }
 function toE164Maybe(phone) {
   if (!phone) return '';
@@ -122,8 +125,24 @@ function getCustomFieldText(session, key) {
   } catch { return ''; }
 }
 
+async function findOrderRecordIdBySession(sessionId){
+  const base  = process.env.AIRTABLE_BASE_ID;
+  const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || 'Orders');
+  const url   = new URL(`https://api.airtable.com/v0/${base}/${table}`);
+  url.searchParams.set('filterByFormula', `({stripe_session_id}='${sessionId}')`);
+  url.searchParams.set('maxRecords', '1');
+  const r = await fetch(url.toString(), { headers: { Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}` } });
+  if (!r.ok) return null;
+  const j = await r.json();
+  return (j.records || [])[0]?.id || null;
+}
+
 async function upsertOrderWithFallbacks(session) {
   if (!hasOrdersEnv()) return;
+
+  // Idempotency: if we already inserted for this session, bail
+  const existingId = await findOrderRecordIdBySession(session.id);
+  if (existingId) return;
 
   const base = process.env.AIRTABLE_BASE_ID;
   const table = encodeURIComponent(process.env.AIRTABLE_TABLE_NAME || 'Orders');
@@ -142,14 +161,18 @@ async function upsertOrderWithFallbacks(session) {
   const notesCF   = (getCustomFieldText(session, 'order_notes') || '').trim();
   const notes = [notesMeta, notesCF].filter(Boolean).join(' | ').slice(0, 1000);
 
+  const deliveryDate = session.metadata?.deliveryDate || '';
+  const timeWindow   = session.metadata?.timeWindow || '';
+  const suggestedDrv = (session.metadata?.driver || '').trim();
+
   // Try these payloads in order until one succeeds (no 'created' anywhere):
   const attempts = [
-    // 1) Full (may fail if your table lacks fields or single-select options)
+    // 1) Full (includes suggested_driver)
     {
       fields: {
         stripe_session_id: session.id,
-        delivery_date: session.metadata?.deliveryDate || '',
-        preferred_window: session.metadata?.timeWindow || '',
+        delivery_date: deliveryDate,
+        preferred_window: timeWindow,
         status: 'unassigned',
         delivery_time: '',
         route_position: null,
@@ -159,44 +182,48 @@ async function upsertOrderWithFallbacks(session) {
         address: compactAddress(shipping),
         items: itemsStr,
         total: (session.amount_total ?? 0) / 100,
+        ...(suggestedDrv ? { suggested_driver: suggestedDrv } : {}),
         ...(notes ? { notes } : {}),
       }
     },
-    // 2) Medium (remove status/items/route/delivery_time)
+    // 2) Medium
     {
       fields: {
         stripe_session_id: session.id,
-        delivery_date: session.metadata?.deliveryDate || '',
-        preferred_window: session.metadata?.timeWindow || '',
+        delivery_date: deliveryDate,
+        preferred_window: timeWindow,
         customer_name: cd.name || shipping.name || '',
         email: cd.email || '',
         phone: toE164Maybe(cd.phone || ''),
         address: compactAddress(shipping),
         total: (session.amount_total ?? 0) / 100,
+        ...(suggestedDrv ? { suggested_driver: suggestedDrv } : {}),
         ...(notes ? { notes } : {}),
       }
     },
-    // 3) Minimal A (might still fail if email/address fields don't exist)
+    // 3) Minimal A
     {
       fields: {
         stripe_session_id: session.id,
         customer_name: cd.name || shipping.name || '',
         email: cd.email || '',
+        ...(suggestedDrv ? { suggested_driver: suggestedDrv } : {}),
         ...(notes ? { notes } : {}),
       }
     },
-    // 4) Minimal B (bare minimum: should work on almost any table)
+    // 4) Minimal B
     {
       fields: {
         stripe_session_id: session.id,
         customer_name: cd.name || shipping.name || '',
+        ...(suggestedDrv ? { suggested_driver: suggestedDrv } : {}),
         ...(notes ? { notes } : {}),
       }
     }
   ];
 
   for (let i = 0; i < attempts.length; i++) {
-    const body = { records: [{ fields: attempts[i].fields }] };
+    const body = { typecast: true, records: [{ fields: attempts[i].fields }] };
     const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
     if (r.ok) {
       console.log('Airtable Orders insert OK (attempt', i+1, ') for session', session.id);
