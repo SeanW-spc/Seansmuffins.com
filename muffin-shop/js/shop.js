@@ -2,15 +2,9 @@
 (() => {
   const { $, $$, on, toast, computeDefaultDeliveryDate, fmtDateInput } = window.SMUtils || {};
 
-  // ---- API base helper (SM REV) ----
-  const API_BASE = (window.SMREV_API_BASE || '/api').replace(/\/+$/,'');
-  function apiUrl(path, params) {
-    const full = `${API_BASE}${path.startsWith('/') ? path : '/' + path}`;
-    let u;
-    try { u = new URL(full); } catch { u = new URL(full, window.location.origin); }
-    if (params) for (const [k,v] of Object.entries(params)) u.searchParams.set(k, v);
-    return u.toString();
-  }
+  // API base (SM REV). If not set, fall back to same-origin (dev).
+  const API_BASE = (window.SM_REV_API_BASE || '').replace(/\/$/, '');
+  const apiUrl = (path) => (API_BASE ? `${API_BASE}${path}` : path);
 
   // Cart state
   const CART_KEY = 'sm_cart_v1';
@@ -266,7 +260,7 @@
 
       rememberPendingOrder({ date, win, notes, items: cart.map(i => ({...i})) });
 
-      const resp = await fetch(apiUrl('/create-checkout-session'), {
+      const resp = await fetch(apiUrl('/api/create-checkout-session'), {
         method: 'POST',
         headers: { 'Content-Type':'application/json' },
         body: JSON.stringify(payload)
@@ -330,7 +324,7 @@
 
   // Thank you page summary
   function renderThankYou(){
-    const host = $('#thank-you-summary');
+    const host = $('#order-summary'); // fixed id
     if (!host) return;
     const po = readPendingOrder();
     const url = new URL(window.location.href);
@@ -364,7 +358,7 @@
     setTimeout(clearPendingOrder, 60_000);
   }
 
-  // Voting form
+  // Voting form → SM REV
   const $voteForm = $('#vote-form');
   if ($voteForm){
     on($voteForm, 'submit', async (e) => {
@@ -373,13 +367,39 @@
       const flavor = (fd.get('flavor') || '').toString().trim();
       if (!flavor){ toast('Pick a flavor'); return; }
       try {
-        // stays same-origin; this marketing endpoint can remain on muffin-shop
-        const resp = await fetch('/api/vote-flavor', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ flavor }) });
+        const resp = await fetch(apiUrl('/api/vote-flavor'), {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ flavor })
+        });
         if (!resp.ok) throw new Error();
         toast('Thanks for voting!');
         $voteForm.reset();
       } catch {
         toast('Could not send your vote.');
+      }
+    });
+  }
+
+  // Optional: Merch notify form → SM REV
+  const $merchForm = $('#merch-form');
+  if ($merchForm){
+    const $msg = $('#merch-msg');
+    on($merchForm, 'submit', async (e) => {
+      e.preventDefault();
+      const email = (new FormData($merchForm).get('email') || '').toString().trim();
+      if (!email){ toast('Enter your email'); return; }
+      try{
+        const r = await fetch(apiUrl('/api/notify-merch'), {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json' },
+          body: JSON.stringify({ email })
+        });
+        if (!r.ok) throw new Error();
+        if ($msg) $msg.textContent = 'You’re on the list! 🎉';
+        $merchForm.reset();
+      }catch{
+        if ($msg) $msg.textContent = 'Could not save your email right now.';
       }
     });
   }

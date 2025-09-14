@@ -7,6 +7,10 @@
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
+  <!-- A11y live + Toasts -->
+  <span id="a11y-live" class="visually-hidden" aria-live="polite"></span>
+  <div id="toast" class="toast-container" aria-live="polite"></div>
+
   <header class="site-header">
     <div class="container header-inner">
       <a class="brand" href="index.html">
@@ -29,14 +33,14 @@
   <main class="section">
     <div class="container">
       <h1>Privacy Policy</h1>
-      <p><em>Last updated: <span id="pp-date"></span></em></p>
+      <p><em>Last updated: <span>September 14, 2025</span></em></p>
 
       <h2>Summary</h2>
       <p>We collect only the information needed to deliver your order: contact details, delivery address and time window, and optional notes (e.g., delivery instructions or allergies). Payments are processed by Stripe. Orders and delivery scheduling are managed in Airtable. We don’t sell your data or use advertising trackers.</p>
 
       <h2>Information we collect</h2>
       <ul>
-        <li><strong>Order & delivery details:</strong> items ordered, preferred delivery date/time window, address.</li>
+        <li><strong>Order &amp; delivery details:</strong> items ordered, preferred delivery date/time window, address.</li>
         <li><strong>Contact details:</strong> name, email, phone (for receipts and delivery updates).</li>
         <li><strong>Notes (optional):</strong> delivery instructions or allergy info you choose to provide.</li>
         <li><strong>Payment:</strong> handled by Stripe; we don’t store card numbers on our servers.</li>
@@ -53,7 +57,7 @@
 
       <h2>Sharing</h2>
       <ul>
-        <li><strong>Stripe</strong> (payments & receipts).</li>
+        <li><strong>Stripe</strong> (payments &amp; receipts).</li>
         <li><strong>Airtable</strong> (order and delivery management).</li>
         <li><strong>Hosting/infra</strong> (e.g., Vercel) to run the website.</li>
       </ul>
@@ -90,32 +94,46 @@
     </div>
   </footer>
 
-  <div id="cookie-banner" class="cookie-banner" hidden>
-    <div class="cookie-inner">
-      <div>
-        We use essential cookies/local storage to run the site and Stripe for secure checkout.
-        See our <a href="cookies.html">Cookies</a> and <a href="privacy.html">Privacy</a>.
-      </div>
-      <div class="cookie-actions">
-        <button id="cookie-accept" class="btn btn-primary">OK</button>
-      </div>
-    </div>
-  </div>
+  <!-- Cart Drawer (consistent with other pages) -->
+  <aside id="cart-drawer" class="cart-drawer" aria-hidden="true" aria-label="Shopping cart">
+    <div class="cart-header"><h2>Your Cart</h2><button id="cart-close" class="cart-close" aria-label="Close cart">✕</button></div>
+    <div id="cart-items" class="cart-items"></div>
+    <div class="cart-footer">
+      <div class="cart-total-row"><span>Items:</span><strong id="cart-item-count">0</strong></div>
 
+      <div class="cart-delivery">
+        <h3>Delivery Details</h3>
+        <div class="row">
+          <div>
+            <label for="delivery-date">Date</label>
+            <input type="date" id="delivery-date" required>
+          </div>
+          <div>
+            <label for="delivery-time">Preferred time</label>
+            <select id="delivery-time" required>
+              <option value="">Select a window…</option>
+              <option>6:00–7:00 AM</option>
+              <option>7:00–8:00 AM</option>
+              <option>8:00–9:00 AM</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="cart-actions"><button id="cart-clear" class="btn btn-ghost">Clear</button><button id="cart-checkout" class="btn btn-primary">Checkout</button></div>
+      <p class="cart-cutoff">Orders after 8:30 PM are delivered the day after tomorrow.</p>
+      <p class="cart-note">Checkout is handled securely by Stripe.</p>
+    </div>
+  </aside>
+  <div id="cart-backdrop" class="cart-backdrop" aria-hidden="true"></div>
+
+  <!-- Scripts (Stripe first, then config, then utils, then app scripts) -->
+  <script src="https://js.stripe.com/v3"></script>
   <script src="js/config.js"></script>
-  <script src="js/slots-ui.js"></script>
   <script src="js/utils.js"></script>
-<script src="js/availability.js"></script>
-<script src="js/shop.js"></script>
+  <script src="js/slots-ui.js"></script>
+  <script src="js/availability.js"></script>
+  <script src="js/shop.js"></script>
   <script src="js/cookies.js"></script>
-  <script>
-    // set dates
-    (function(){
-      const d = document.getElementById('pp-date');
-      if (d) d.textContent = new Date().toLocaleDateString();
-      const y = document.getElementById('y');
-      if (y) y.textContent = new Date().getFullYear();
-    })();
-  </script>
 </body>
 </html>

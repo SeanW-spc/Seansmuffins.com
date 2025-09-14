@@ -7,6 +7,10 @@
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
+  <!-- A11y live + Toasts -->
+  <span id="a11y-live" class="visually-hidden" aria-live="polite"></span>
+  <div id="toast" class="toast-container" aria-live="polite"></div>
+
   <header class="site-header">
     <div class="container header-inner">
       <a class="brand" href="index.html">
@@ -28,8 +32,8 @@
 
   <main class="section">
     <div class="container">
-      <h1>Cookies & Local Storage</h1>
-      <p><em>Last updated: <span id="ck-date"></span></em></p>
+      <h1>Cookies &amp; Local Storage</h1>
+      <p><em>Last updated: <span>September 14, 2025</span></em></p>
 
       <p>We use essential browser storage and cookies to make the site work and to process payments securely with Stripe. We do not use advertising cookies.</p>
 
@@ -67,19 +71,44 @@
     </div>
   </div>
 
+  <!-- Cart Drawer (consistent across pages) -->
+  <aside id="cart-drawer" class="cart-drawer" aria-hidden="true" aria-label="Shopping cart">
+    <div class="cart-header"><h2>Your Cart</h2><button id="cart-close" class="cart-close" aria-label="Close cart">✕</button></div>
+    <div id="cart-items" class="cart-items"></div>
+    <div class="cart-footer">
+      <div class="cart-total-row"><span>Items:</span><strong id="cart-item-count">0</strong></div>
+      <div class="cart-delivery">
+        <h3>Delivery Details</h3>
+        <div class="row">
+          <div>
+            <label for="delivery-date">Date</label>
+            <input type="date" id="delivery-date" required>
+          </div>
+          <div>
+            <label for="delivery-time">Preferred time</label>
+            <select id="delivery-time" required>
+              <option value="">Select a window…</option>
+              <option>6:00–7:00 AM</option>
+              <option>7:00–8:00 AM</option>
+              <option>8:00–9:00 AM</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="cart-actions"><button id="cart-clear" class="btn btn-ghost">Clear</button><button id="cart-checkout" class="btn btn-primary">Checkout</button></div>
+      <p class="cart-cutoff">Orders after 8:30 PM are delivered the day after tomorrow.</p>
+      <p class="cart-note">Checkout is handled securely by Stripe.</p>
+    </div>
+  </aside>
+  <div id="cart-backdrop" class="cart-backdrop" aria-hidden="true"></div>
+
+  <!-- Scripts (Stripe first, then config, then utils, then app scripts) -->
+  <script src="https://js.stripe.com/v3"></script>
   <script src="js/config.js"></script>
-  <script src="js/slots-ui.js"></script>
   <script src="js/utils.js"></script>
-<script src="js/availability.js"></script>
-<script src="js/shop.js"></script>
+  <script src="js/slots-ui.js"></script>
+  <script src="js/availability.js"></script>
+  <script src="js/shop.js"></script>
   <script src="js/cookies.js"></script>
-  <script>
-    (function(){
-      const d = document.getElementById('ck-date');
-      if (d) d.textContent = new Date().toLocaleDateString();
-      const y = document.getElementById('y');
-      if (y) y.textContent = new Date().getFullYear();
-    })();
-  </script>
 </body>
 </html>
