@@ -2,9 +2,9 @@
 (() => {
   const { $, $$, on, toast, computeDefaultDeliveryDate, fmtDateInput } = window.SMUtils || {};
 
-  // API base (SM REV). If not set, fall back to same-origin (dev).
-  const API_BASE = (window.SM_REV_API_BASE || '').replace(/\/$/, '');
-  const apiUrl = (path) => (API_BASE ? `${API_BASE}${path}` : path);
+  // API base (SM REV). If not set, fall back to same-origin /api (dev).
+  const API_BASE = (window.SMREV_API_BASE || '/api').replace(/\/+$/, '');
+  const apiUrl = (path) => `${API_BASE}${path.startsWith('/') ? path : '/' + path}`;
 
   // Cart state
   const CART_KEY = 'sm_cart_v1';
@@ -260,7 +260,7 @@
 
       rememberPendingOrder({ date, win, notes, items: cart.map(i => ({...i})) });
 
-      const resp = await fetch(apiUrl('/api/create-checkout-session'), {
+      const resp = await fetch(apiUrl('/create-checkout-session'), {
         method: 'POST',
         headers: { 'Content-Type':'application/json' },
         body: JSON.stringify(payload)
@@ -367,7 +367,7 @@
       const flavor = (fd.get('flavor') || '').toString().trim();
       if (!flavor){ toast('Pick a flavor'); return; }
       try {
-        const resp = await fetch(apiUrl('/api/vote-flavor'), {
+        const resp = await fetch(apiUrl('/vote-flavor'), {
           method:'POST',
           headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ flavor })
@@ -390,7 +390,7 @@
       const email = (new FormData($merchForm).get('email') || '').toString().trim();
       if (!email){ toast('Enter your email'); return; }
       try{
-        const r = await fetch(apiUrl('/api/notify-merch'), {
+        const r = await fetch(apiUrl('/notify-merch'), {
           method: 'POST',
           headers: { 'Content-Type':'application/json' },
           body: JSON.stringify({ email })
