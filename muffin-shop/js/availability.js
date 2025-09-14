@@ -5,6 +5,16 @@
   const WINDOWS = ['6:00–7:00 AM','7:00–8:00 AM','8:00–9:00 AM'];
   const CART_KEY = 'sm_cart_v1';
 
+  // ---- API base helper (SM REV) ----
+  const API_BASE = (window.SMREV_API_BASE || '/api').replace(/\/+$/,'');
+  function apiUrl(path, params) {
+    const full = `${API_BASE}${path.startsWith('/') ? path : '/' + path}`;
+    let u;
+    try { u = new URL(full); } catch { u = new URL(full, window.location.origin); }
+    if (params) for (const [k,v] of Object.entries(params)) u.searchParams.set(k, v);
+    return u.toString();
+  }
+
   const ymd = d => {
     const x = d instanceof Date ? d : new Date(d);
     return isNaN(x) ? '' : x.toISOString().slice(0,10);
@@ -21,10 +31,8 @@
   async function fetchAvailability(date) {
     if (!date) return null;
     try {
-      const u = new URL('/api/slot-availability', window.location.origin);
-      u.searchParams.set('date', date);
-      u.searchParams.set('detailed', '1');
-      const r = await fetch(u.toString(), { cache: 'no-store' });
+      const url = apiUrl('/slot-availability', { date, detailed: '1' });
+      const r = await fetch(url, { cache: 'no-store' });
       if (!r.ok) return null;
       return await r.json();
     } catch { return null; }

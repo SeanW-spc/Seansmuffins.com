@@ -2,6 +2,16 @@
 (() => {
   const { $, $$, on, toast, computeDefaultDeliveryDate, fmtDateInput } = window.SMUtils || {};
 
+  // ---- API base helper (SM REV) ----
+  const API_BASE = (window.SMREV_API_BASE || '/api').replace(/\/+$/,'');
+  function apiUrl(path, params) {
+    const full = `${API_BASE}${path.startsWith('/') ? path : '/' + path}`;
+    let u;
+    try { u = new URL(full); } catch { u = new URL(full, window.location.origin); }
+    if (params) for (const [k,v] of Object.entries(params)) u.searchParams.set(k, v);
+    return u.toString();
+  }
+
   // Cart state
   const CART_KEY = 'sm_cart_v1';
   let cart = [];
@@ -256,7 +266,7 @@
 
       rememberPendingOrder({ date, win, notes, items: cart.map(i => ({...i})) });
 
-      const resp = await fetch('/api/create-checkout-session', {
+      const resp = await fetch(apiUrl('/create-checkout-session'), {
         method: 'POST',
         headers: { 'Content-Type':'application/json' },
         body: JSON.stringify(payload)
@@ -363,6 +373,7 @@
       const flavor = (fd.get('flavor') || '').toString().trim();
       if (!flavor){ toast('Pick a flavor'); return; }
       try {
+        // stays same-origin; this marketing endpoint can remain on muffin-shop
         const resp = await fetch('/api/vote-flavor', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ flavor }) });
         if (!resp.ok) throw new Error();
         toast('Thanks for voting!');
