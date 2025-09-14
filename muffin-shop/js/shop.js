@@ -3,7 +3,7 @@
   const { $, $$, on, toast, computeDefaultDeliveryDate, fmtDateInput } = window.SMUtils || {};
 
   // API base (SM REV). If not set, fall back to same-origin /api (dev).
-  const API_BASE = (window.SMREV_API_BASE || '/api').replace(/\/+$/, '');
+  const API_BASE = (window.SMREV_API_BASE || '').replace(/\/$/, '');
   const apiUrl = (path) => `${API_BASE}${path.startsWith('/') ? path : '/' + path}`;
 
   // Cart state
