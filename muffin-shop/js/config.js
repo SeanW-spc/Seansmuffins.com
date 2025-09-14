@@ -15,7 +15,7 @@ window.PRODUCT_PRICE_MAP = {
 
 // ===== Backend (SM REV) =====
 // Where the storefront calls the backend (SM REV). Replace the placeholder domain with your deployed SM REV URL.
-window.SMREV_API_BASE = window.SMREV_API_BASE || 'https://smrev.seansmuffins.com/api';
+window.SMREV_API_BASE = window.SMREV_API_BASE || 'https://sm-rev.vercel.app/api';
 
 // Optional: allow easy overriding for previews/local testing via ?apiBase=... or localStorage("smrev_api_base")
 (() => {
