@@ -15,5 +15,8 @@
         { "key": "Permissions-Policy", "value": "interest-cohort=()" }
       ]
     }
+  ],
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://sm-rev.vercel.app/api/:path*" }
   ]
 }
