@@ -10,35 +10,23 @@
     scheduled: 'scheduledOrders'
   };
 
-  // ===== Dynamic hourly window grid (default 6:00 AM → 7:00 PM, step 60m)
-  const DASH_EN = '–';
-  function pad2(n){ return String(n).padStart(2,'0'); }
-  function minsTo12hLabel(m){
-    let hh = Math.floor(m/60) % 24;
-    const mm = m % 60;
-    const am = hh < 12;
-    let h12 = hh % 12; if (h12 === 0) h12 = 12;
-    return `${h12}:${pad2(mm)} ${am ? 'AM' : 'PM'}`;
-  }
-  function expandGrid(startH=6, endH=19, step=60){
-    const out = [];
-    for (let t = startH*60; t + step <= endH*60; t += step){
-      out.push(`${minsTo12hLabel(t)}${DASH_EN}${minsTo12hLabel(t+step)}`);
-    }
-    return out;
-  }
-  const ALL_WINDOWS = expandGrid(6, 19, 60); // 6:00 AM–7:00 PM hourly
+  // Canonical windows (EN–DASH), dynamic if drivers.html injects window.SMREV_WINDOWS
+  const WINDOWS = (Array.isArray(window.SMREV_WINDOWS) && window.SMREV_WINDOWS.length)
+    ? window.SMREV_WINDOWS.slice()
+    : ['6:00–7:00 AM','7:00–8:00 AM','8:00–9:00 AM'];
 
   const cfg = () => ({ apiBase: localStorage.getItem(LS.apiBase) || '', adminToken: localStorage.getItem(LS.adminToken) || '' });
   const saveCfg = (b,t)=>{ if(b!=null)localStorage.setItem(LS.apiBase,b); if(t!=null)localStorage.setItem(LS.adminToken,t); };
   const toast = (m)=>{ try{ let t=$('#toast'); if(!t){alert(m);return;} const d=document.createElement('div'); d.className='toast'; d.textContent=m; t.appendChild(d); setTimeout(()=>d.remove(),2200);}catch{alert(m);} };
   const todayStr = () => new Date().toISOString().slice(0,10);
   const escapeHtml = s => String(s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[m]));
+  const shortHour = w => w.replace(/:00/g,''); // compact labels (keeps AM/PM)
 
-  // Robust URL join + auth headers
+  // URL + auth
   const buildUrl = (base, path) => `${String(base||'').replace(/\/+$/,'')}/${String(path||'').replace(/^\/+/,'')}`;
   const authHeaders = (token) => ({ 'Authorization': `Bearer ${token}`, 'X-Admin-Token': token });
 
+  // ===== Storage for drivers + per-day overrides =====
   function loadDrivers(){ try { return JSON.parse(localStorage.getItem(LS.drivers) || '[]'); } catch { return []; } }
   function saveDrivers(list){ localStorage.setItem(LS.drivers, JSON.stringify(list)); }
 
@@ -53,89 +41,60 @@
     saveOverrides(all);
   }
 
-  // Normalize/compare window labels
-  function normDash(s){ return String(s||'').replace(/–|—|-/g, DASH_EN).trim(); }
-  function normalizeWin(raw){
-    if (!raw) return '';
-    let s = String(raw).trim();
-    s = s.replace(/\s*-\s*/g, DASH_EN).replace(/\s*–\s*/g, DASH_EN);
-    s = s.replace(/\s*(am|pm)$/i, m => ' ' + m.toUpperCase());
-    return s;
-  }
-
-  function startMinutes(win){
-    try{
-      const start = String(win).split(DASH_EN)[0].trim();
-      const m = start.match(/^(\d{1,2}):?(\d{2})?\s*(AM|PM)$/i);
-      if (!m) return Number.MAX_SAFE_INTEGER;
-      let h = parseInt(m[1],10);
-      const mm = parseInt(m[2] ?? '0',10);
-      const ap = m[3].toUpperCase();
-      if (h === 12) h = 0;
-      if (ap === 'PM') h += 12;
-      return h*60 + mm;
-    }catch{ return Number.MAX_SAFE_INTEGER; }
-  }
-
+  // ===== Availability helpers =====
   function effectiveWindowsFor(name, defaultWins, date){
     const ov = getDriverOverrides(name)[date];
-    return Array.isArray(ov) ? ov : (defaultWins && defaultWins.length ? defaultWins : ALL_WINDOWS);
+    return Array.isArray(ov) ? ov : (defaultWins && defaultWins.length ? defaultWins : WINDOWS);
   }
 
-  function shortHour(win){
-    // "6:00–7:00 AM" -> "6–7 AM"; "12:00–1:00 PM" -> "12–1 PM"
-    const m = String(win).match(/^(\d{1,2})(?::\d{2})?–(\d{1,2})(?::\d{2})?\s*(AM|PM)$/i);
-    if (!m) return win;
-    return `${m[1]}–${m[2]} ${m[3].toUpperCase()}`;
-  }
   function windowsSummary(wins){
-    const list = (wins || []).slice().sort((a,b)=> startMinutes(a)-startMinutes(b));
-    return list.map(shortHour).join(', ') || 'None';
+    const set = new Set(wins || []);
+    const ordered = WINDOWS.filter(w => set.has(w));
+    return ordered.map(shortHour).join(', ') || 'None';
   }
 
   function computeCapsByWindowAndDriver(){
-    const out = {}; // window -> { total, drivers: { name:cap } }
+    const out = {}; WINDOWS.forEach(w => out[w] = { total:0, drivers:{} });
     const date = $('#applyDate')?.value || todayStr();
     serializeDrivers().forEach(d => {
       if (!d.active) return;
       const effWins = effectiveWindowsFor(d.name, d.windows, date);
       (effWins || []).forEach(w => {
         if (!out[w]) out[w] = { total:0, drivers:{} };
-        out[w].drivers[d.name] = (out[w].drivers[d.name] || 0) + Number(d.capacity||0);
-        out[w].total += Number(d.capacity||0);
+        const cap = Number(d.capacity||0);
+        out[w].drivers[d.name] = (out[w].drivers[d.name] || 0) + cap;
+        out[w].total += cap;
       });
     });
-    // Sort keys chronologically
-    const sorted = {};
-    Object.keys(out).sort((a,b)=> startMinutes(a)-startMinutes(b)).forEach(k => sorted[k]=out[k]);
-    return sorted;
+    return out;
   }
 
   function renderAvailPreview(date, avail, caps){
     const host = $('#capsRows'); if (!host) return;
     host.innerHTML = '';
-    const wins = Object.keys(caps);
-    if (!wins.length){ host.textContent = date ? 'No planned hours selected.' : 'No date selected.'; return; }
+    const wins = Object.keys(caps).length ? Object.keys(caps) : WINDOWS;
     wins.forEach(w => {
-      const a = (avail && avail.windows && avail.windows[w]) ? avail.windows[w] : { capacity:0, current:0, available:0, drivers:{} };
+      const a = (avail && avail.windows && (avail.windows[w] || avail.windows[Object.keys(avail.windows).find(k => k.trim()===w.trim())])) || { capacity:0, current:0, available:0, drivers:{} };
       const capPlan = caps[w] || { total:0, drivers:{} };
       const div = document.createElement('div');
-      const totalLine = `<div><strong>${w}</strong>: ${a.current}/${a.capacity} used — <em>${a.available} open</em> (plan total: ${capPlan.total})</div>`;
+      const totalLine = `<div><strong>${w}</strong>: ${Number(a.current||0)}/${Number(a.capacity||0)} used — <em>${Number(a.available||0)} open</em> (planned per-driver total: ${capPlan.total})</div>`;
       const driverLines = Object.keys(capPlan.drivers).map(d => {
         const da = a.drivers?.[d] || { capacity:0, current:0, available:0 };
-        return `<div style="font-size:12px;margin-left:8px;">• ${escapeHtml(d)}: ${da.current}/${da.capacity} used — ${da.available} open (plan: ${capPlan.drivers[d]})</div>`;
+        return `<div style="font-size:12px;margin-left:8px;">• ${escapeHtml(d)}: ${Number(da.current||0)}/${Number(da.capacity||0)} used — ${Number(da.available||0)} open (plan: ${capPlan.drivers[d]})</div>`;
       }).join('');
       div.innerHTML = totalLine + driverLines;
       host.appendChild(div);
     });
+    if (!date) host.textContent = 'No date selected.';
   }
 
   async function fetchAvailability(date){
-    const { apiBase, adminToken } = cfg(); if (!apiBase || !date) return null;
+    const { apiBase, adminToken } = cfg();
+    if (!apiBase || !date) return null;
     const u = new URL(buildUrl(apiBase, 'api/slot-availability'));
     u.searchParams.set('date', date);
-    u.searchParams.set('detailed', '1'); // ask for per-driver details
-    const r = await fetch(u.toString(), { headers: authHeaders(adminToken) }); // include token
+    u.searchParams.set('detailed', '1'); // per-driver when token valid
+    const r = await fetch(u.toString(), { headers: (adminToken ? authHeaders(adminToken) : {}), cache: 'no-store' });
     if (!r.ok) return null;
     return await r.json();
   }
@@ -158,7 +117,7 @@
     const name = row.querySelector('.drv-name').value.trim() || 'Driver';
     const cap  = Math.max(1, Number(row.querySelector('.drv-cap').value||1));
     const active = row.querySelector('.drv-active').checked;
-    const wins = row.dataset.windows ? JSON.parse(row.dataset.windows) : ALL_WINDOWS;
+    const wins = row.dataset.windows ? JSON.parse(row.dataset.windows) : WINDOWS;
 
     const card = row.closest('.driver-card');
     card.querySelector('.drv-title').textContent = name;
@@ -169,7 +128,7 @@
     pill.classList.toggle('green', active);
 
     const chipsHost = card.querySelector('.drv-plan-chips');
-    const chips = (wins || []).sort((a,b)=>startMinutes(a)-startMinutes(b)).map(w => `<span class="pill">${escapeHtml(shortHour(w))} × ${cap}</span>`).join(' ');
+    const chips = (wins || []).map(w => `<span class="pill">${escapeHtml(shortHour(w))} × ${cap}</span>`).join(' ');
     chipsHost.innerHTML = chips || '';
   }
 
@@ -178,26 +137,31 @@
       const name = body.querySelector('.drv-name').value.trim() || 'Driver';
       const cap  = Math.max(1, Number(body.querySelector('.drv-cap').value||1));
       const act  = body.querySelector('.drv-active').checked;
-      const wins = body.dataset.windows ? JSON.parse(body.dataset.windows) : ALL_WINDOWS.slice();
+      const wins = body.dataset.windows ? JSON.parse(body.dataset.windows) : WINDOWS.slice();
       return { name, capacity: cap, active: act, windows: wins };
     });
   }
 
-  // Route helpers (generalized)
-  function routeTimeKey(win){ return startMinutes(win); }
+  // ===== Route utilities =====
+  function startMinutes(win){
+    const m = /^\s*(\d{1,2}):(\d{2})\s*–\s*(\d{1,2}):(\d{2})\s*(AM|PM)\s*$/i.exec(String(win||'')); // "H:MM–H:MM AM/PM"
+    if (m){
+      let sh = +m[1], sm = +m[2], eh = +m[3], em = +m[4], period = m[5].toUpperCase();
+      let sh24;
+      if (period === 'AM'){ sh24 = (sh % 12); }
+      else { sh24 = (sh < eh) ? (sh % 12) + 12 : (sh % 12); }
+      return sh24 * 60 + sm;
+    }
+    return 9999;
+  }
   function timeToWindow(hhmm){
-    // '06:00' → '6:00–7:00 AM', etc.
-    const m = String(hhmm||'').match(/^(\d{2}):(\d{2})$/);
-    if (!m) return '';
-    const h = parseInt(m[1],10), mm = parseInt(m[2],10);
-    const start = minsTo12hLabel(h*60 + mm);
-    const end   = minsTo12hLabel(h*60 + mm + 60);
-    return `${start}${DASH_EN}${end}`;
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm||'')); if (!m) return '';
+    const H = +m[1], M = +m[2];
+    const h12 = (H % 12) || 12;
+    const startStr = `${h12}:${String(M).padStart(2,'0')}`;
+    return WINDOWS.find(w => w.startsWith(startStr)) || '';
   }
-
-  function getScheduledLocal(){
-    try{ return JSON.parse(localStorage.getItem(LS.scheduled) || '[]'); }catch{ return []; }
-  }
+  function getScheduledLocal(){ try{ return JSON.parse(localStorage.getItem(LS.scheduled) || '[]'); }catch{ return []; } }
 
   // ----- Remote orders helpers (confirmed) -----
   async function fetchConfirmedOrders(date){
@@ -259,7 +223,6 @@
     };
   }
 
-  // Build route using cached remote + local
   const REMOTE_BY_DATE = {};
   async function ensureRemoteForDate(date){
     if (REMOTE_BY_DATE[date]) return REMOTE_BY_DATE[date];
@@ -272,19 +235,16 @@
     const local = getScheduledLocal();
 
     const r = remote
-      .filter(o => (o.driver || '') === driverName && (!winFilter || normalizeWin(o.preferred_window) === normalizeWin(winFilter)))
+      .filter(o => (o.driver || '') === driverName && (!winFilter || o.preferred_window === winFilter))
       .map(makeRouteItemFromApi);
 
     const l = local
-      .filter(x => x.driver === driverName && x.date === date && (!winFilter || normalizeWin(timeToWindow(x.time||'')) === normalizeWin(winFilter)))
+      .filter(x => x.driver === driverName && x.date === date && (!winFilter || timeToWindow(x.time||'') === winFilter))
       .map(makeRouteItemFromLocal);
 
     const seen = new Set(l.map(i => i.session));
     const combined = l.concat(r.filter(i => !seen.has(i.session)));
-    combined.sort((a,b) => {
-      if ((a.confirmedAt||0)!==(b.confirmedAt||0)) return (a.confirmedAt||0)-(b.confirmedAt||0);
-      return routeTimeKey(a.window)-routeTimeKey(b.window);
-    });
+    combined.sort((a,b) => startMinutes(a.window) - startMinutes(b.window));
     return combined;
   }
 
@@ -312,7 +272,255 @@
     host.appendChild(list);
   }
 
-  // Existing per-driver card, now dynamic windows
+  // ===== NEW: Standalone modals (calendar, per-day editor, default hours) =====
+  const modalCtx = {
+    row: null,
+    calMonth: new Date(),
+    selDate: null,
+    els: { cal: null, day: null, def: null }
+  };
+
+  function ensureModal(id, titleText, extraHeaderHtml=''){
+    let m = document.getElementById(id);
+    if (m) return m;
+    m = document.createElement('div');
+    m.id = id;
+    m.className = 'hours-modal';           // reuse existing overlay styling
+    m.setAttribute('role','dialog');
+    m.setAttribute('aria-modal','true');
+
+    const panel = document.createElement('div');
+    panel.className = 'panel';
+    panel.innerHTML = `
+      <div class="calendar-header" style="margin-bottom:6px; align-items:center; display:flex; gap:8px;">
+        <button class="btn" data-close style="margin-right:auto">✖ Close</button>
+        ${extraHeaderHtml || ''}
+      </div>
+      <h3 class="modal-title" style="margin:0 0 6px 0">${escapeHtml(titleText || '')}</h3>
+      <div class="modal-body"></div>
+      <div class="hours-actions" style="margin-top:10px; display:none;">
+        <button class="btn" data-cancel>Cancel</button>
+        <button class="primary-btn" data-save>Save</button>
+      </div>
+    `;
+    m.appendChild(panel);
+    document.body.appendChild(m);
+
+    // Close handlers
+    panel.querySelector('[data-close]')?.addEventListener('click', () => m.style.display='none');
+    panel.querySelector('[data-cancel]')?.addEventListener('click', () => m.style.display='none');
+
+    return m;
+  }
+
+  function showModal(modal){ if (modal) modal.style.display = 'flex'; }
+  function hideModal(modal){ if (modal) modal.style.display = 'none'; }
+
+  // ---- Calendar modal
+  function ensureCalendarModal(){
+    const extraHeader = `<button class="btn" id="btnOpenDefault">⚙ Set default availability</button>`;
+    const cal = ensureModal('drvCalModal', 'Driver availability calendar', extraHeader);
+    const body = cal.querySelector('.modal-body');
+
+    if (!cal.dataset.built){
+      // Build calendar structure
+      body.innerHTML = `
+        <div class="calendar-header" style="margin:0 0 6px 0;">
+          <button class="calendar-nav" id="drvCalPrev" type="button">‹</button>
+          <h3 id="drvCalTitle" style="margin:0"></h3>
+          <button class="calendar-nav" id="drvCalNext" type="button">›</button>
+        </div>
+        <div class="calendar-grid">
+          <div class="calendar-dow">Sun</div><div class="calendar-dow">Mon</div><div class="calendar-dow">Tue</div>
+          <div class="calendar-dow">Wed</div><div class="calendar-dow">Thu</div><div class="calendar-dow">Fri</div><div class="calendar-dow">Sat</div>
+          <div id="drvCalDays" class="calendar-days"></div>
+        </div>
+      `;
+      cal.dataset.built = '1';
+    }
+
+    // Wire header buttons
+    cal.querySelector('#btnOpenDefault')?.addEventListener('click', () => openDefaultModal());
+    cal.querySelector('#drvCalPrev')?.addEventListener('click', () => { const m = modalCtx.calMonth; modalCtx.calMonth = new Date(m.getFullYear(), m.getMonth()-1, 1); renderCalendarModal(); });
+    cal.querySelector('#drvCalNext')?.addEventListener('click', () => { const m = modalCtx.calMonth; modalCtx.calMonth = new Date(m.getFullYear(), m.getMonth()+1, 1); renderCalendarModal(); });
+
+    modalCtx.els.cal = cal;
+    return cal;
+  }
+
+  function monthStart(d){ return new Date(d.getFullYear(), d.getMonth(), 1); }
+  function monthEnd(d){ return new Date(d.getFullYear(), d.getMonth()+1, 0); }
+  function ymd(date){ const y=date.getFullYear(); const m=String(date.getMonth()+1).padStart(2,'0'); const dd=String(date.getDate()).padStart(2,'0'); return `${y}-${m}-${dd}`; }
+
+  function renderCalendarModal(){
+    const cal = modalCtx.els.cal || ensureCalendarModal();
+    const titleEl = cal.querySelector('#drvCalTitle');
+    const daysHost = cal.querySelector('#drvCalDays');
+    if (!titleEl || !daysHost || !modalCtx.row) return;
+
+    const m0 = monthStart(modalCtx.calMonth);
+    const mZ = monthEnd(modalCtx.calMonth);
+    titleEl.textContent = m0.toLocaleString(undefined, { month:'long', year:'numeric' });
+
+    daysHost.innerHTML = '';
+    const pad = m0.getDay();
+    for (let i=0;i<pad;i++){
+      const cell = document.createElement('div');
+      cell.className = 'calendar-cell other-month';
+      daysHost.appendChild(cell);
+    }
+
+    const drvName = modalCtx.row.querySelector('.drv-name').value.trim() || 'Driver';
+    const defaultWins = JSON.parse(modalCtx.row.dataset.windows || '[]');
+    const overrides = getDriverOverrides(drvName);
+
+    for (let d=1; d<=mZ.getDate(); d++){
+      const cur = new Date(m0.getFullYear(), m0.getMonth(), d);
+      const cell = document.createElement('div');
+      cell.className = 'calendar-cell';
+      if (ymd(cur) === todayStr()) cell.classList.add('today');
+
+      const dateStr = ymd(cur);
+      const ov = overrides[dateStr];
+      let pill = '';
+      if (Array.isArray(ov)){
+        if (ov.length === 0) pill = `<span class="pill">Off</span>`;
+        else pill = `<span class="pill">${ov.map(shortHour).join(', ')}</span>`;
+      }
+
+      cell.innerHTML = `<div class="date-num">${d}</div>${pill}`;
+      cell.addEventListener('click', () => openDayModal(cur));
+      daysHost.appendChild(cell);
+    }
+  }
+
+  // ---- Default (weekly) modal
+  function ensureDefaultModal(){
+    const def = ensureModal('drvDefaultModal', 'Default weekly availability');
+    const body = def.querySelector('.modal-body');
+    const actions = def.querySelector('.hours-actions');
+    actions.style.display = 'flex';
+
+    if (!def.dataset.built){
+      body.innerHTML = `
+        <div class="muted" style="margin-bottom:6px">Select the hours this driver usually works each week.</div>
+        <div id="drvDefaultGrid" class="hours-grid"></div>
+      `;
+      def.dataset.built = '1';
+    }
+
+    // Save default
+    def.querySelector('[data-save]').onclick = () => {
+      if (!modalCtx.row) return hideModal(def);
+      const selected = readHoursGrid($('#drvDefaultGrid'));
+      modalCtx.row.dataset.windows = JSON.stringify(selected);
+      saveDrivers(serializeDrivers());
+      syncSummaryFromRow(modalCtx.row);
+      refreshPreview();
+      hideModal(def); // return to calendar
+    };
+
+    modalCtx.els.def = def;
+    return def;
+  }
+
+  // ---- Per-day modal
+  function ensureDayModal(){
+    const day = ensureModal('drvDayModal', 'Edit day availability');
+    const body = day.querySelector('.modal-body');
+    const actions = day.querySelector('.hours-actions');
+    actions.style.display = 'flex';
+
+    if (!day.dataset.built){
+      body.innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <strong id="drvDayLabel">—</strong>
+          <button class="btn" id="drvDayUseDefault" type="button">Use default</button>
+          <button class="btn" id="drvDayClear" type="button">Not available</button>
+          <button class="btn" id="drvDayAll" type="button">All hours</button>
+        </div>
+        <div id="drvDayGrid" class="hours-grid"></div>
+      `;
+      day.dataset.built = '1';
+    }
+
+    // Wire buttons (handlers set when opening)
+    modalCtx.els.day = day;
+    return day;
+  }
+
+  // ---- Hours grid (checkboxes for all WINDOWS)
+  function buildHoursGrid(host, winsArr){
+    host.innerHTML = '';
+    const set = new Set(winsArr || []);
+    WINDOWS.forEach(w => {
+      const id = 'h_' + Math.random().toString(36).slice(2);
+      const wrap = document.createElement('label');
+      wrap.style.display = 'flex';
+      wrap.style.alignItems = 'center';
+      wrap.style.gap = '6px';
+      wrap.innerHTML = `<input type="checkbox" id="${id}" ${set.has(w)?'checked':''}> ${escapeHtml(w)}`;
+      wrap.dataset.window = w;
+      host.appendChild(wrap);
+    });
+  }
+  function readHoursGrid(host){
+    return Array.from(host.querySelectorAll('label'))
+      .filter(l => l.querySelector('input')?.checked)
+      .map(l => l.dataset.window);
+  }
+
+  // ---- Open modals
+  function openDefaultModal(){
+    const def = ensureDefaultModal();
+    // Pre-fill from driver default
+    const currentDefault = modalCtx.row ? JSON.parse(modalCtx.row.dataset.windows || JSON.stringify(WINDOWS)) : WINDOWS;
+    buildHoursGrid($('#drvDefaultGrid'), currentDefault);
+    showModal(def);
+  }
+
+  function openDayModal(dateObj){
+    modalCtx.selDate = dateObj;
+    const day = ensureDayModal();
+    const lbl  = day.querySelector('#drvDayLabel');
+    const grid = day.querySelector('#drvDayGrid');
+    if (!modalCtx.row || !lbl || !grid) return;
+
+    const drvName = modalCtx.row.querySelector('.drv-name').value.trim() || 'Driver';
+    const defWins = JSON.parse(modalCtx.row.dataset.windows || '[]');
+    const curOv = getDriverOverrides(drvName)[ymd(dateObj)];
+    const wins = Array.isArray(curOv) ? curOv : defWins;
+
+    lbl.textContent = `${ymd(dateObj)} (${dateObj.toLocaleDateString(undefined, { weekday:'short' })})`;
+    buildHoursGrid(grid, wins);
+
+    day.querySelector('#drvDayUseDefault').onclick = () => { setDriverOverride(drvName, ymd(dateObj), undefined); renderCalendarModal(); openDayModal(dateObj); };
+    day.querySelector('#drvDayClear').onclick      = () => { setDriverOverride(drvName, ymd(dateObj), []); renderCalendarModal(); openDayModal(dateObj); };
+    day.querySelector('#drvDayAll').onclick        = () => { setDriverOverride(drvName, ymd(dateObj), WINDOWS.slice()); renderCalendarModal(); openDayModal(dateObj); };
+
+    // Save button writes selected and closes day modal (returns to calendar)
+    day.querySelector('[data-save]').onclick = () => {
+      const selected = readHoursGrid(grid);
+      setDriverOverride(drvName, ymd(dateObj), selected);
+      renderCalendarModal();
+      refreshPreview();
+      hideModal(day);
+    };
+
+    showModal(day);
+  }
+
+  function openCalendarModal(rowBody){
+    modalCtx.row = rowBody;
+    modalCtx.calMonth = new Date($('#applyDate')?.value || todayStr());
+    modalCtx.selDate = null;
+
+    ensureCalendarModal();
+    renderCalendarModal();
+    showModal(modalCtx.els.cal);
+  }
+
+  // ===== Driver card =====
   function driverCardEl(d){
     const tpl = $('#driverTpl').content.cloneNode(true);
     const details = tpl.querySelector('.driver-card');
@@ -337,7 +545,7 @@
     cap.value  = Number(d.capacity||5);
     act.checked = (d.active!==false);
 
-    const selWins = Array.isArray(d.windows) && d.windows.length ? d.windows : ALL_WINDOWS.slice();
+    const selWins = Array.isArray(d.windows) && d.windows.length ? d.windows : WINDOWS.slice();
     body.dataset.windows = JSON.stringify(selWins);
 
     const emit = () => { saveDrivers(serializeDrivers()); syncSummaryFromRow(body); refreshPreview(); };
@@ -347,11 +555,7 @@
     rem.addEventListener('click', () => { details.remove(); emit(); });
     fold.addEventListener('click', () => { details.open = !details.open; });
 
-    // Route tools
-    // Populate window filter with dynamic options + "All windows"
-    routeWin.innerHTML = '<option value="">All windows</option>' + ALL_WINDOWS.map(w => `<option>${w}</option>`).join('');
     routeDate.value = $('#applyDate')?.value || todayStr();
-
     async function doLoadRoute(){
       const dn = (name.value || 'Driver').trim() || 'Driver';
       const items = await routeItemsForDriver(routeDate.value, dn, routeWin.value);
@@ -373,7 +577,8 @@
       if (routeWrap.style.display === 'block') doLoadRoute();
     });
 
-    btnHours.addEventListener('click', () => openHoursModal(body));
+    // NEW: open standalone calendar modal
+    btnHours.addEventListener('click', () => openCalendarModal(body));
 
     syncSummaryFromRow(body);
     return details;
@@ -385,133 +590,14 @@
     if (!host) return;
     host.innerHTML = '';
     if (!list.length){
-      host.appendChild(driverCardEl({ name:'You', capacity:5, active:true, windows:ALL_WINDOWS.slice(0,3) })); // default 6–9 AM to start
+      host.appendChild(driverCardEl({ name:'You', capacity:5, active:true, windows:WINDOWS }));
       saveDrivers(serializeDrivers());
       return;
     }
     list.forEach(d => host.appendChild(driverCardEl(d)));
   }
 
-  // ===== Hours modal calendar =====
-  let modalCtx = { row: null, calMonth: new Date(), selDate: null };
-
-  function buildWeeklyGrid(host, winsArr){
-    host.innerHTML = '';
-    const wanted = Array.isArray(winsArr) && winsArr.length ? winsArr : ALL_WINDOWS;
-    ALL_WINDOWS.forEach(w => {
-      const id = 'wk_' + Math.random().toString(36).slice(2);
-      const wrap = document.createElement('label');
-      wrap.style.display = 'flex';
-      wrap.style.alignItems = 'center';
-      wrap.style.gap = '6px';
-      wrap.innerHTML = `<input type="checkbox" id="${id}" ${wanted.includes(w)?'checked':''}> ${w}`;
-      wrap.dataset.window = w;
-      host.appendChild(wrap);
-    });
-  }
-  function readWeeklyGrid(host){
-    return Array.from(host.querySelectorAll('label')).filter(l => l.querySelector('input')?.checked).map(l => l.dataset.window);
-  }
-
-  function monthStart(d){ return new Date(d.getFullYear(), d.getMonth(), 1); }
-  function monthEnd(d){ return new Date(d.getFullYear(), d.getMonth()+1, 0); }
-  function ymd(date){ const y=date.getFullYear(); const m=String(date.getMonth()+1).padStart(2,'0'); const dd=String(date.getDate()).padStart(2,'0'); return `${y}-${m}-${dd}`; }
-
-  function renderCalendar(){
-    const title = $('#calTitle'), daysHost = $('#calDays');
-    if (!title || !daysHost) return;
-    const m0 = monthStart(modalCtx.calMonth);
-    const mZ = monthEnd(modalCtx.calMonth);
-    title.textContent = m0.toLocaleString(undefined, { month:'long', year:'numeric' });
-
-    daysHost.innerHTML = '';
-    const pad = m0.getDay();
-    for (let i=0;i<pad;i++){
-      const cell = document.createElement('div');
-      cell.className = 'calendar-cell other-month';
-      daysHost.appendChild(cell);
-    }
-    const drvName = modalCtx.row?.querySelector('.drv-name')?.value.trim() || 'Driver';
-    const defaultWins = JSON.parse(modalCtx.row?.dataset?.windows || '[]');
-    const overrides = getDriverOverrides(drvName);
-
-    for (let d=1; d<=mZ.getDate(); d++){
-      const cur = new Date(m0.getFullYear(), m0.getMonth(), d);
-      const cell = document.createElement('div');
-      cell.className = 'calendar-cell';
-      if (ymd(cur) === todayStr()) cell.classList.add('today');
-
-      const dateStr = ymd(cur);
-      const ov = overrides[dateStr];
-      let pill = '';
-      if (Array.isArray(ov)){
-        if (ov.length === 0) pill = `<span class="pill">Off</span>`;
-        else pill = `<span class="pill">${ov.map(shortHour).join(', ')}</span>`;
-      }
-
-      cell.innerHTML = `<div class="date-num">${d}</div>${pill}`;
-      cell.addEventListener('click', () => openDayEditor(cur));
-      daysHost.appendChild(cell);
-    }
-  }
-
-  function openDayEditor(dateObj){
-    modalCtx.selDate = dateObj;
-    const host = $('#dayEditor');
-    const lbl  = $('#deDate');
-    const grid = $('#deGrid');
-    if (!host || !lbl || !grid || !modalCtx.row) return;
-
-    const drvName = modalCtx.row.querySelector('.drv-name').value.trim() || 'Driver';
-    const defWins = JSON.parse(modalCtx.row.dataset.windows || '[]');
-    const curOv = getDriverOverrides(drvName)[ymd(dateObj)];
-    const wins = Array.isArray(curOv) ? curOv : defWins;
-
-    lbl.textContent = `Edit: ${ymd(dateObj)} (${dateObj.toLocaleDateString(undefined, { weekday:'short' })})`;
-    buildWeeklyGrid(grid, wins);
-    host.style.display = 'block';
-
-    $('#deUseDefault').onclick = () => { setDriverOverride(drvName, ymd(dateObj), undefined); renderCalendar(); openDayEditor(dateObj); };
-    $('#deClear').onclick      = () => { setDriverOverride(drvName, ymd(dateObj), []); renderCalendar(); openDayEditor(dateObj); };
-    $('#deAll').onclick        = () => { setDriverOverride(drvName, ymd(dateObj), ALL_WINDOWS.slice()); renderCalendar(); openDayEditor(dateObj); };
-
-    grid.querySelectorAll('input[type=checkbox]').forEach(cb => {
-      cb.addEventListener('change', () => {
-        const selected = readWeeklyGrid(grid);
-        setDriverOverride(drvName, ymd(dateObj), selected);
-        renderCalendar();
-      });
-    });
-  }
-
-  function openHoursModal(rowBody){
-    modalCtx.row = rowBody;
-    modalCtx.calMonth = new Date($('#applyDate')?.value || todayStr());
-    modalCtx.selDate = null;
-
-    const wkGrid = $('#hoursGrid');
-    const currentDefault = JSON.parse(rowBody.dataset.windows || JSON.stringify(ALL_WINDOWS.slice(0,3)));
-    if (wkGrid) buildWeeklyGrid(wkGrid, currentDefault);
-
-    $('#hoursModal')?.style && ($('#hoursModal').style.display = 'flex');
-
-    renderCalendar();
-    $('#calPrev')?.addEventListener('click', () => { const m = modalCtx.calMonth; modalCtx.calMonth = new Date(m.getFullYear(), m.getMonth()-1, 1); renderCalendar(); });
-    $('#calNext')?.addEventListener('click', () => { const m = modalCtx.calMonth; modalCtx.calMonth = new Date(m.getFullYear(), m.getMonth()+1, 1); renderCalendar(); });
-  }
-  function closeHoursModal(){ const m=$('#hoursModal'); if (m) m.style.display='none'; modalCtx = { row:null, calMonth:new Date(), selDate:null }; }
-  $('#hoursCancel')?.addEventListener('click', closeHoursModal);
-  $('#hoursSave')?.addEventListener('click', () => {
-    if (!modalCtx.row) return closeHoursModal();
-    const selectedDefault = readWeeklyGrid($('#hoursGrid'));
-    modalCtx.row.dataset.windows = JSON.stringify(selectedDefault);
-    saveDrivers(serializeDrivers());
-    syncSummaryFromRow(modalCtx.row);
-    refreshPreview();
-    closeHoursModal();
-  });
-
-  // ===== New: Schedule Calendar (month view) =====
+  // ===== Schedule calendar (right-hand card) — unchanged =====
   const schedEls = {
     title: $('#schedTitle'),
     prev:  $('#schedPrev'),
@@ -522,7 +608,6 @@
     dayDrivers:$('#dayDrivers')
   };
   const schedCtx = { month: new Date(), counts: {} };
-
   function daysInMonth(y,m){ return new Date(y, m+1, 0).getDate(); }
 
   async function fetchDayCountsForMonth(baseDate){
@@ -546,10 +631,6 @@
     return counts;
   }
 
-  function monthStart(d){ return new Date(d.getFullYear(), d.getMonth(), 1); }
-  function monthEnd(d){ return new Date(d.getFullYear(), d.getMonth()+1, 0); }
-  function ymd2(date){ const y=date.getFullYear(); const m=String(date.getMonth()+1).padStart(2,'0'); const dd=String(date.getDate()).padStart(2,'0'); return `${y}-${m}-${dd}`; }
-
   function renderSchedCalendar(){
     const { title, days } = schedEls;
     if (!title || !days) return;
@@ -568,7 +649,7 @@
     }
     for (let d=1; d<=mZ.getDate(); d++){
       const cur = new Date(m0.getFullYear(), m0.getMonth(), d);
-      const dateStr = ymd2(cur);
+      const dateStr = ymd(cur);
       const cell = document.createElement('div');
       cell.className = 'calendar-cell';
       if (dateStr === todayStr()) cell.classList.add('today');
@@ -613,9 +694,14 @@
         if (!details.open) return;
         const items = await routeItemsForDriver(dateStr, name, '');
         const total = items.length;
-        summary.innerHTML = `<strong>${escapeHtml(name)}</strong> • ${total} stop${total===1?'':'s'}`;
 
-        const listWrap = document.createElement('div');
+        const counts = {};
+        items.forEach(i => { if (i.window) counts[i.window] = (counts[i.window]||0) + 1; });
+        const top = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0];
+        const suffix = top ? ` — busiest: ${escapeHtml(top[0])} (${top[1]})` : '';
+
+        summary.innerHTML = `<strong>${escapeHtml(name)}</strong> • ${total} stop${total===1?'':'s'}${suffix}`;
+
         const mapBtn = document.createElement('button');
         mapBtn.type = 'button';
         mapBtn.className = 'mini';
@@ -657,7 +743,7 @@
     window.open(url,'_blank','noopener');
   }
 
-  // ===== Existing "Map Orders" quick tool (kept) =====
+  // ===== Existing "Map Orders" quick tool =====
   async function loadConfirmed(){
     const { apiBase, adminToken } = cfg();
     if (!apiBase || !adminToken) { toast('Set API Base & Token'); return; }
@@ -673,7 +759,7 @@
     if (!r.ok){ toast('Load failed'); return; }
     const j = await r.json();
     const addresses = (j.orders || [])
-      .filter(o => !win || normalizeWin(o.preferred_window) === normalizeWin(win))
+      .filter(o => !win || o.preferred_window === win)
       .map(o => o.address)
       .filter(Boolean);
 
@@ -695,7 +781,6 @@
 
   // ===== Init =====
   (function init(){
-    // Default base = current folder (e.g., https://site/SM-REV/admin)
     const defaultBase = (()=>{ try{ return new URL('.', window.location.href).href.replace(/\/$/,''); } catch { return window.location.origin; } })();
     const c = cfg();
     const apiBaseEl = $('#apiBase');
@@ -714,7 +799,7 @@
     $('#addDriver')?.addEventListener('click', () => {
       const host = $('#driversList');
       if (!host) return;
-      host.appendChild(driverCardEl({ name:'', capacity:5, active:true, windows:ALL_WINDOWS.slice(0,3) }));
+      host.appendChild(driverCardEl({ name:'', capacity:5, active:true, windows:WINDOWS }));
       saveDrivers(serializeDrivers());
       refreshPreview();
     });
@@ -722,13 +807,13 @@
       const host = $('#driversList');
       if (!host) return;
       host.innerHTML = '';
-      host.appendChild(driverCardEl({ name:'You', capacity:5, active:true, windows:ALL_WINDOWS.slice(0,3) }));
+      host.appendChild(driverCardEl({ name:'You', capacity:5, active:true, windows:WINDOWS }));
       saveDrivers(serializeDrivers());
       refreshPreview();
     });
     applyDateEl?.addEventListener('change', refreshPreview);
 
-    // APPLY CAPACITY: enumerate exact driver windows (most precise)
+    // Apply capacities to Airtable
     $('#applyCapacity')?.addEventListener('click', async () => {
       const { apiBase, adminToken } = cfg();
       if (!apiBase || !adminToken) { toast('Set API Base & Token'); return; }
@@ -760,8 +845,7 @@
     renderDrivers();
     refreshPreview();
 
-    // Schedule Calendar hooks
-    const schedTitleOK = (schedEls.title && schedEls.days);
+    // Right-side schedule calendar (if present)
     if (schedEls.prev) schedEls.prev.addEventListener('click', async () => {
       const d = schedCtx.month; schedCtx.month = new Date(d.getFullYear(), d.getMonth()-1, 1);
       await loadSchedMonth();
@@ -770,7 +854,6 @@
       const d = schedCtx.month; schedCtx.month = new Date(d.getFullYear(), d.getMonth()+1, 1);
       await loadSchedMonth();
     });
-
-    if (schedTitleOK) { loadSchedMonth().then(()=> { showDay(today).catch(()=>{}); }); }
+    if (schedEls.title && schedEls.days) { loadSchedMonth().then(()=> { showDay(today).catch(()=>{}); }); }
   })();
 })();
