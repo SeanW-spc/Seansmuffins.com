@@ -15,7 +15,7 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(()=>{ toastHost.classList.remove('show'); toastHost.textContent=''; }, ms);
   }
-  const normDash = s => String(s||'').replace(/–|—/g,'-').trim();
+  const normDash = (s) => (window.SMUtils?.normDash ? window.SMUtils.normDash(s) : String(s||'').replace(/–|—|-/g,'–').trim());
   const fmtDateInput = (d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   const addDays = (d,n)=>{ const x=new Date(d); x.setDate(x.getDate()+n); x.setHours(0,0,0,0); return x; };
 
@@ -51,6 +51,7 @@
 
   // Disable select until user checks
   function disableTimeSelect(resetLabel=true){
+    if (window.SMREV_AVAIL_DYNAMIC) return;
     if (!$time) return;
     $time.disabled = true;
     $time.value = '';
@@ -74,8 +75,9 @@
   }
 
   // Availability fetch + normalize (object or array shapes)
-  async function fetchAvailability(date){
-    const r = await fetch(`/api/slot-availability?date=${encodeURIComponent(date)}`, { cache:'no-store' });
+    async function fetchAvailability(date){
+    const apiBase = (window.SMREV_API_BASE || '/api').replace(/\/+$/,'');
+    const r = await fetch(`${apiBase}/slot-availability?date=${encodeURIComponent(date)}`, { cache:'no-store' });
     if (!r.ok) throw new Error('avail_fetch');
     return await r.json();
   }
