@@ -27,10 +27,10 @@
     return s;
   }
 
-  async function fetchAvailability(date) {
+    async function fetchAvailability(date) {
     if (!date) return null;
     try {
-      const url = apiUrl('/slot-availability', { date, detailed: '1' });
+      const url = apiUrl('/slot-availability', { date });
       const r = await fetch(url, { cache: 'no-store' });
       if (!r.ok) return null;
       return await r.json();
