@@ -263,6 +263,7 @@
   document.addEventListener('DOMContentLoaded', () => {
     const dateEl = $('#delivery-date');
     const timeEl = $('#delivery-time');
+        if (timeEl) timeEl.disabled = false;
     if (dateEl || timeEl) {
       refreshAvailability();
       if (dateEl) dateEl.addEventListener('change', refreshAvailability);
