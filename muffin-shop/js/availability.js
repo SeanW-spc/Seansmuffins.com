@@ -253,10 +253,9 @@
       const data = await fetchAvailability(date);
       const { map, rawByWin, windowsList } = normalizeAvailability(data);
 
-      // Rebuild options to mirror API-provided windows for this date
-      if (windowsList && windowsList.length) {
-        rebuildTimeOptions(timeEl, windowsList);
-      }
+      // Rebuild options to mirror API-provided windows for this date (always)
+      const apiWindows = Object.keys((data && data.windows) || {});
+      rebuildTimeOptions(timeEl, apiWindows);
 
       // Safety: ensure base labels are preserved on options
       Array.from(timeEl.options).forEach(opt => {
