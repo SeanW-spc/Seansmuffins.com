@@ -3,7 +3,7 @@
   const { $, normDash } = window.SMUtils || {};
 
   const CART_KEY = 'sm_cart_v1';
-    // Tell other scripts that dynamic availability is in control
+      // Signal that dynamic availability controls the page
   window.SMREV_AVAIL_DYNAMIC = true;
 
   // ---- API base helper (SM REV) ----
@@ -202,6 +202,7 @@
   async function refreshAvailability(){
     const dateEl = $('#delivery-date');
     const timeEl = $('#delivery-time');
+        if (timeEl) timeEl.disabled = false;
     const slotLeft = $('#slot-left');
     if (!dateEl || !timeEl) return;
 

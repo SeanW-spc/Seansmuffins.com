@@ -1,6 +1,6 @@
 // muffin-shop/js/slots-ui.js
 (() => {
-    // Skip this whole script if availability.js is handling the page
+      // If availability.js is active, do nothing on this page
   if (window.SMREV_AVAIL_DYNAMIC) return;
   // --- tiny utils
   const $  = (sel, root=document) => root.querySelector(sel);
