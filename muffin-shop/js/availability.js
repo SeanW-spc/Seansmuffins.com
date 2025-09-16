@@ -3,6 +3,8 @@
   const { $, normDash } = window.SMUtils || {};
 
   const CART_KEY = 'sm_cart_v1';
+    // Tell other scripts that dynamic availability is in control
+  window.SMREV_AVAIL_DYNAMIC = true;
 
   // ---- API base helper (SM REV) ----
   const API_BASE = (window.SMREV_API_BASE || '/api').replace(/\/+$/, '');
