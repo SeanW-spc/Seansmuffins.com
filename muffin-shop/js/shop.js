@@ -268,6 +268,24 @@
       if (!win){  toast('Please choose a delivery window'); $deliveryTime?.focus(); return; }
 
       const need = cartItemsTotal() || 1;
+
+      // 1) Quick “same base” & “same label” sanity check using the EXACT base used for checkout.
+      const availUrl = apiUrl('/slot-availability') + '?date=' + encodeURIComponent(date);
+      console.debug('[SMREV] Using API_BASE', API_BASE, { availUrl });
+
+      const avail = await fetch(availUrl, { cache: 'no-store' }).then(r => r.json()).catch(() => null);
+      const keys  = avail?.windows ? Object.keys(avail.windows) : [];
+
+      // If the selected label isn’t in the server’s current keys, refresh and ask user to reselect.
+      if (!keys.includes(win)) {
+        console.warn('[SMREV] Window mismatch just before checkout', { date, win, keys });
+        toast('Selected time just changed. Please reselect a time.');
+        refreshAvailability();
+        $deliveryTime?.focus();
+        return;
+      }
+
+      // 2) Capacity preflight for the selected quantity (belt & suspenders)
       const ok = await preflightCapacity(date, win, need);
       if (!ok){
         toast('That delivery window is full for your quantity. Please pick another window.');
@@ -283,11 +301,7 @@
         timeWindow: win,
         orderNotes: notes || ''
       };
-
-      rememberPendingOrder({
-        date, win, notes,
-        items: cart.map(i => ({ name: i.name, quantity: i.quantity }))
-      });
+      console.debug('[SMREV] create-checkout-session → payload', { API_BASE, payload });
 
       const resp = await fetch(apiUrl('/create-checkout-session'), {
         method: 'POST',
