@@ -2,14 +2,8 @@
 (() => {
   const { $, $$, on, toast, computeDefaultDeliveryDate, fmtDateInput } = window.SMUtils || {};
 
-  // API base (SM REV).
-  // If window.SMREV_API_BASE is missing, default to same-origin /api.
-  // If user gives a site root (no /api), append /api; if they include /api, don't double it.
-  (function fixApiBase(){
-    const raw = (window.SMREV_API_BASE || '/api').replace(/\/+$/,'');
-    window.__SMREV_API_BASE_FIXED__ = raw.endsWith('/api') ? raw : (raw + '/api');
-  })();
-  const API_BASE = window.__SMREV_API_BASE_FIXED__;
+  // API base (SM REV). If not set, fall back to same-origin /api (dev).
+  const API_BASE = (window.SMREV_API_BASE || '').replace(/\/$/, '');
   const apiUrl = (path) => `${API_BASE}${path.startsWith('/') ? path : '/' + path}`;
 
   // Cart state
@@ -50,7 +44,7 @@
     try {
       cart = sanitizeCartItems(cart);
       localStorage.setItem(CART_KEY, JSON.stringify(cart));
-      if (bc) bc.postMessage({ type:'cart', from:CLIENT_ID, cart: cart.map(i => ({...i})) });
+      if (bc) bc.postMessage({ type:'cart', from:CLIENT_ID, cart: cart.map(i => ({ ...i })) });
       document.dispatchEvent(new Event('sm:cartChanged'));
     } catch {}
   }
@@ -81,7 +75,7 @@
   const $deliveryDate = $('#delivery-date');
   const $deliveryTime = $('#delivery-time');
   const $orderNotes = $('#order-notes');
-  const $slotLeft = $('#slot-left'); // (optional badge your availability script may update)
+  const $slotLeft = $('#slot-left');
 
   // Touch-friendly "tap"
   let _lastTouchTs = 0;
@@ -96,48 +90,46 @@
   const refreshAvailability = () => (window.refreshAvailability && window.refreshAvailability());
   const preflightCapacity   = (...args) => (window.preflightCapacity ? window.preflightCapacity(...args) : Promise.resolve(true));
 
-  function setupTimeOptions(){
-    if (!$deliveryTime) return;
-    Array.from($deliveryTime.options).forEach(opt => {
-      const label = (opt.textContent || '').trim();
-      if (!opt.dataset.base) opt.dataset.base = label;
-      if (!opt.hasAttribute('value') && label && opt.value === '') {
-        opt.value = expandHourToWindow(label); // ensure canonical value even for static HTML options
-      }
-    });
-  }
-
-  function selectedWindowBase(){
-    if (!$deliveryTime) return '';
-    const opt = $deliveryTime.selectedOptions[0];
-    const base = (opt ? (opt.dataset.base || opt.value || opt.textContent) : '').trim();
-    // Strip any extra UI adornments like " — 5 left"
-    return base.replace(/\s+—.+$/,'');
-  }
-
-  // Expand "3 PM" → "3:00–4:00 PM" (or "3:30 PM" → "3:30–4:30 PM");
-  // if it's already a range, just normalize to EN–DASH + AM/PM caps.
+  // Expand “3 PM” → “3:00–4:00 PM” with EN–DASH
   function expandHourToWindow(raw){
-    let s = String(raw||'').trim();
-    if (!s) return '';
-    // Already looks like a range?
-    if (/[–-]/.test(s)) {
-      return s
+    // Already a range? normalize AM/PM and EN–DASH and return.
+    if (/[–-]/.test(raw)) {
+      return String(raw).trim()
         .replace(/\s*-\s*/g,'–').replace(/\s*–\s*/g,'–')
         .replace(/\s*(am|pm)$/i, m => ' ' + m.toUpperCase());
     }
-    // Single time → one-hour range
-    const m = s.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i);
-    if (!m) return s;
+    const m = String(raw||'').trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i);
+    if (!m) return raw;
     let h = parseInt(m[1],10);
-    const mm = (m[2] || '00').padStart(2,'0');
+    const mm = m[2] ? m[2] : '00';
     let ap = m[3].toUpperCase();
 
     let endH = (h % 12) + 1;
     let endAP = ap;
     if (h === 11) endAP = (ap === 'AM' ? 'PM' : 'AM');
 
-    return `${h}:${mm} ${ap}–${endH}:${mm} ${endAP}`;
+    const start = `${h}:${mm} ${ap}`;
+    const end   = `${endH}:${mm} ${endAP}`;
+    return `${start}–${end}`.replace(/\s*(am|pm)$/i, m => ' ' + m.toUpperCase());
+  }
+
+  function setupTimeOptions(){
+    if (!$deliveryTime) return;
+    // Ensure each option has a stable base label and a value
+    Array.from($deliveryTime.options).forEach(opt => {
+      const label = (opt.textContent || '').trim();
+      if (!opt.dataset.base) opt.dataset.base = label;
+      // If authoring-time HTML didn't include a value, synthesize one
+      if (!opt.hasAttribute('value') && label && opt.value === '') {
+        opt.value = expandHourToWindow(label);
+      }
+    });
+  }
+  function selectedWindowBase(){
+    if (!$deliveryTime) return '';
+    const opt = $deliveryTime.selectedOptions[0];
+    const base = (opt ? (opt.dataset.base || opt.value || opt.textContent) : '').trim();
+    return base.replace(/\s+—.+$/,'');
   }
 
   function updateCartBadge(){
@@ -265,7 +257,6 @@
     });
   }
 
-  // Single, canonical checkout handler
   on($cartCheckout, 'click', async () => {
     try {
       if (!cart.length){ toast('Your cart is empty'); return; }
@@ -273,11 +264,9 @@
       const baseWin = selectedWindowBase();
       const win     = expandHourToWindow(baseWin);
       const notes   = ($orderNotes?.value || '').trim();
-
       if (!date){ toast('Please choose a delivery date'); $deliveryDate?.focus(); return; }
       if (!win){  toast('Please choose a delivery window'); $deliveryTime?.focus(); return; }
 
-      // Client-side capacity preflight (asks SM-REV /slot-availability)
       const need = cartItemsTotal() || 1;
       const ok = await preflightCapacity(date, win, need);
       if (!ok){
@@ -306,11 +295,8 @@
         body: JSON.stringify(payload)
       });
 
-      // Read once so we can log + parse regardless of status.
       const raw = await resp.text();
-      console.debug('[SMREV] /create-checkout-session ←', resp.status, raw);
       let j = {}; try { j = raw ? JSON.parse(raw) : {}; } catch {}
-
       if (!resp.ok){
         let errCode = j?.error || 'checkout_failed';
         const map = {
