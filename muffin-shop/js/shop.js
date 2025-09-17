@@ -93,12 +93,13 @@
   function setupTimeOptions(){
     if (!$deliveryTime) return;
     Array.from($deliveryTime.options).forEach(opt => {
-      const label = (opt.textContent || '').trim();
-      if (!opt.dataset.base) opt.dataset.base = label;
-      if (!opt.hasAttribute('value') && label && opt.value === '') {
-        opt.value = label;
-      }
-    });
+    const label = (opt.textContent || '').trim();
+    if (!opt.dataset.base) opt.dataset.base = label;
+    if (!opt.hasAttribute('value') && label && opt.value === '') {
+    opt.value = expandHourToWindow(label);
+  }
+});
+
   }
   function selectedWindowBase(){
     if (!$deliveryTime) return '';
@@ -106,6 +107,32 @@
     const base = (opt ? (opt.dataset.base || opt.value || opt.textContent) : '').trim();
     return base.replace(/\s+—.+$/,'');
   }
+
+  function expandHourToWindow(raw){
+  // Already a range with an EN–DASH? normalize AM/PM and return.
+  if (/[–-]/.test(raw)) {
+    return String(raw).trim()
+      .replace(/\s*-\s*/g,'–').replace(/\s*–\s*/g,'–')
+      .replace(/\s*(am|pm)$/i, m => ' ' + m.toUpperCase());
+  }
+  // Expand “3 PM” or “3:30 PM” to a one-hour range with EN–DASH.
+  const m = String(raw||'').trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i);
+  if (!m) return raw;
+  let h = parseInt(m[1],10);
+  const mm = m[2] ? m[2] : '00';
+  let ap = m[3].toUpperCase();
+
+  let endH = (h % 12) + 1;
+  let endAP = ap;
+  if (h === 11) endAP = (ap === 'AM' ? 'PM' : 'AM');
+
+  const pad = n => String(n);
+  const start = `${pad(h)}:${mm} ${ap}`;
+  const end   = `${pad(endH)}:${mm} ${endAP}`;
+  return `${start.replace(/\s+(AM|PM)$/,' $1').replace(/ - /g,'–').replace(/-/g,'–').replace(/\s*–\s*/,'–').replace(' - ','–').replace('–','–') // ensure EN–DASH
+  }`.replace(/\s+$/, '').replace(/\s+–\s+/, '–').replace(/`/g,'') // safety
+  .replace(/^(.*)$/,(s)=>`${start.replace(/\s+(AM|PM)$/,' $1')}–${end}`);
+}
 
   function updateCartBadge(){
     const total = cartItemsTotal();
@@ -235,9 +262,10 @@
   on($cartCheckout, 'click', async () => {
     try {
       if (!cart.length){ toast('Your cart is empty'); return; }
-      const date  = $deliveryDate?.value || '';
-      const win   = $deliveryTime?.value || '';
-      const notes = ($orderNotes?.value || '').trim();
+      const date    = $deliveryDate?.value || '';
+      const baseWin = selectedWindowBase();
+      const win     = expandHourToWindow(baseWin);
+      const notes   = ($orderNotes?.value || '').trim();
       if (!date){ toast('Please choose a delivery date'); $deliveryDate?.focus(); return; }
       if (!win){  toast('Please choose a delivery window'); $deliveryTime?.focus(); return; }
 
