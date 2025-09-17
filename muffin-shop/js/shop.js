@@ -286,42 +286,53 @@
         orderNotes: notes || ''
       };
 
+      console.debug('[SMREV] create-checkout-session → payload', { API_BASE, payload });
+
       rememberPendingOrder({ date, win, notes, items: cart.map(i => ({...i})) });
 
       const resp = await fetch(apiUrl('/create-checkout-session'), {
-        method: 'POST',
-        headers: { 'Content-Type':'application/json' },
-        body: JSON.stringify(payload)
-      });
+  method: 'POST',
+  headers: { 'Content-Type':'application/json' },
+  body: JSON.stringify(payload)
+});
 
-      if (!resp.ok){
-        let errCode = 'checkout_failed';
-        try { const j = await resp.json(); errCode = j?.error || errCode; } catch {}
+// Read once so we can log + parse regardless of status.
+const raw = await resp.text();
+console.debug('[SMREV] /create-checkout-session ←', resp.status, raw);
+let j = {};
+try { j = raw ? JSON.parse(raw) : {}; } catch {}
 
-        const map = {
-          window_full: 'That delivery window is full. Please pick another window.',
-          capacity_full: 'That delivery window is full. Please pick another window.',
-          driver_full: 'All drivers are booked for that window. Please pick another window.',
-          invalid_window: 'Please choose a delivery window.',
-          invalid_date: 'Please choose a valid delivery date.',
-          subscription_disabled: 'Subscriptions are coming soon.',
-          method_not_allowed: 'Please refresh and try again.',
-          missing_fields: 'Please refresh and try again.',
-          invalid_price: 'That item is unavailable. Please refresh and try again.',
-          stripe_key_mismatch: 'Payment system mode mismatch. Please try again shortly.',
-          stripe_config: 'Payment system is being configured. Please try again shortly.',
-          stripe_error: 'Payment processor error. Please try again.',
-          slots_reservation_failed: 'Could not hold your delivery slot. Please try again in 30 seconds.'
-        };
+if (!resp.ok){
+  let errCode = j?.error || 'checkout_failed';
 
-        toast(map[errCode] || 'Checkout failed. Please try again.');
-        if (['window_full','capacity_full','slots_reservation_failed'].includes(errCode)){
-          refreshAvailability();
-        }
-        return;
-      }
+  const map = {
+    window_full: 'That delivery window is full. Please pick another window.',
+    capacity_full: 'That delivery window is full. Please pick another window.',
+    driver_full: 'All drivers are booked for that window. Please pick another window.',
+    invalid_window: 'Please choose a delivery window.',
+    invalid_date: 'Please choose a valid delivery date.',
+    invalid_items: 'Something is wrong with your items. Please refresh and try again.',
+    missing_fields: 'Please refresh and try again.',
+    method_not_allowed: 'Please refresh and try again.',
+    subscription_disabled: 'Subscriptions are coming soon.',
+    invalid_price: 'That item is unavailable. Please refresh and try again.',
+    stripe_key_mismatch: 'Payment system mode mismatch. Please try again shortly.',
+    stripe_config: 'Payment system is being configured. Please try again shortly.',
+    stripe_error: 'Payment processor error. Please try again.',
+    slots_reservation_failed: 'Could not hold your delivery slot. Please try again in 30 seconds.',
+    checkout_failed: 'Checkout failed. Please try again.'
+  };
 
-      const { id, url } = await resp.json();
+  toast(map[errCode] || 'Checkout failed. Please try again.');
+  // Refresh availability on likely-capacity issues (helps recover fast).
+  if (['window_full','capacity_full','slots_reservation_failed','driver_full'].includes(errCode)){
+    refreshAvailability();
+  }
+  return;
+}
+
+// success
+const { id, url } = j;
 
       cart = []; saveCart(); renderCart(); updateCartBadge();
 
