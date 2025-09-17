@@ -92,26 +92,43 @@
 
   // Expand “3 PM” → “3:00–4:00 PM” with EN–DASH
   function expandHourToWindow(raw){
-    // Already a range? normalize AM/PM and EN–DASH and return.
-    if (/[–-]/.test(raw)) {
-      return String(raw).trim()
-        .replace(/\s*-\s*/g,'–').replace(/\s*–\s*/g,'–')
-        .replace(/\s*(am|pm)$/i, m => ' ' + m.toUpperCase());
-    }
-    const m = String(raw||'').trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i);
-    if (!m) return raw;
-    let h = parseInt(m[1],10);
-    const mm = m[2] ? m[2] : '00';
-    let ap = m[3].toUpperCase();
+  let s = String(raw || '').trim();
+  if (!s) return '';
 
-    let endH = (h % 12) + 1;
-    let endAP = ap;
-    if (h === 11) endAP = (ap === 'AM' ? 'PM' : 'AM');
+  // Normalize dash & AM/PM spacing/case up front
+  s = s.replace(/\s*-\s*/g, '–').replace(/\s*–\s*/g, '–');
+  s = s.replace(/\s*(am|pm)\b/ig, m => ' ' + m.toUpperCase());
 
-    const start = `${h}:${mm} ${ap}`;
-    const end   = `${endH}:${mm} ${endAP}`;
-    return `${start}–${end}`.replace(/\s*(am|pm)$/i, m => ' ' + m.toUpperCase());
+  // If it's already a range, normalize to "H:MM–H:MM AM/PM" (AM/PM only at end)
+  if (s.includes('–')) {
+    let [a, b] = s.split('–');
+    const apA = (a.match(/\b(AM|PM)\b/i) || [])[0];
+    const apB = (b.match(/\b(AM|PM)\b/i) || [])[0];
+    const ap  = (apB || apA || '').toUpperCase();
+
+    a = a.replace(/\b(AM|PM)\b/ig, '').trim();
+    b = b.replace(/\b(AM|PM)\b/ig, '').trim();
+
+    if (!a.includes(':')) a = `${a}:00`;
+    if (!b.includes(':')) b = `${b}:00`;
+
+    return `${a}–${b}${ap ? ' ' + ap : ''}`;
   }
+
+  // Single time like "3 PM" or "3:30 PM" → one-hour range with AM/PM on the END only
+  const m = s.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i);
+  if (!m) return s;
+
+  const h  = parseInt(m[1], 10);
+  const mm = (m[2] || '00').padStart(2, '0');
+  const ap = m[3].toUpperCase();
+
+  const endH  = (h % 12) + 1;
+  let endAP   = ap;
+  if (h === 11) endAP = (ap === 'AM' ? 'PM' : 'AM'); // 11→12 flips AM/PM
+
+  return `${h}:${mm}–${endH}:${mm} ${endAP}`; // <-- canonical form
+}
 
   function setupTimeOptions(){
     if (!$deliveryTime) return;
