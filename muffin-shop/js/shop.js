@@ -383,39 +383,59 @@
 
   // Thank you page summary
   function renderThankYou(){
-    const host = $('#order-summary'); // fixed id
-    if (!host) return;
-    const po = readPendingOrder();
-    const url = new URL(window.location.href);
-    const sessionId = url.searchParams.get('session_id');
+  const host = $('#order-summary'); // fixed id
+  if (!host) return;
+  const po = readPendingOrder();
+  const url = new URL(window.location.href);
+  const sessionId = url.searchParams.get('session_id');
 
-    const dl = document.createElement('dl'); dl.className = 'ty-dl';
-    if (po?.date){
-      const dt = document.createElement('dt'); dt.textContent = 'Delivery';
-      const dd = document.createElement('dd'); dd.textContent = `${po.date} • ${po.win}`;
-      dl.appendChild(dt); dl.appendChild(dd);
-    }
-    if (po?.items?.length){
-      const dt = document.createElement('dt'); dt.textContent = 'Items';
-      const dd = document.createElement('dd');
-      dd.innerHTML = po.items.map(i => `${i.name} × ${i.quantity}`).join('<br>');
-      dl.appendChild(dt); dl.appendChild(dd);
-    }
-    if (po?.notes){
-      const dt = document.createElement('dt'); dt.textContent = 'Notes';
-      const dd = document.createElement('dd'); dd.textContent = po.notes;
-      dl.appendChild(dt); dl.appendChild(dd);
-    }
-    host.appendChild(dl);
-
-    if (sessionId){
-      const dbg = document.createElement('p');
-      dbg.style.cssText = 'color:#a0a4aa;font-size:11px;margin-top:12px;';
-      dbg.textContent = `Session: ${sessionId}`;
-      host.appendChild(dbg);
-    }
-    setTimeout(clearPendingOrder, 60_000);
+  const dl = document.createElement('dl'); dl.className = 'ty-dl';
+  if (po?.date){
+    const dt = document.createElement('dt'); dt.textContent = 'Delivery';
+    const dd = document.createElement('dd'); dd.textContent = `${po.date} • ${po.win}`;
+    dl.appendChild(dt); dl.appendChild(dd);
   }
+  if (po?.items?.length){
+    const dt = document.createElement('dt'); dt.textContent = 'Items';
+    const dd = document.createElement('dd');
+    dd.innerHTML = po.items.map(i => `${i.name} × ${i.quantity}`).join('<br>');
+    dl.appendChild(dt); dl.appendChild(dd);
+  }
+  if (po?.notes){
+    const dt = document.createElement('dt'); dt.textContent = 'Notes';
+    const dd = document.createElement('dd'); dd.textContent = po.notes;
+    dl.appendChild(dt); dl.appendChild(dd);
+  }
+  host.appendChild(dl);
+
+  if (sessionId){
+    const dbg = document.createElement('p');
+    dbg.style.cssText = 'color:#a0a4aa;font-size:11px;margin-top:12px;';
+    dbg.textContent = `Session: ${sessionId}`;
+    host.appendChild(dbg);
+
+    // Rescue: ensure the Order row exists and Slot is confirmed.
+    (async () => {
+      try{
+        const r = await fetch(apiUrl('/ensure-order-from-session'), {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json' },
+          body: JSON.stringify({ session_id: sessionId })
+        });
+        const j = await r.json().catch(()=> ({}));
+        if (!r.ok){
+          console.warn('[SMREV] ensure-order-from-session failed', r.status, j);
+        }else{
+          console.debug('[SMREV] ensure-order-from-session', j);
+        }
+      }catch(e){
+        console.warn('[SMREV] ensure-order-from-session error', e);
+      }
+    })();
+  }
+
+  setTimeout(clearPendingOrder, 60_000);
+}
 
   // Voting form → SM REV
   const $voteForm = $('#vote-form');
