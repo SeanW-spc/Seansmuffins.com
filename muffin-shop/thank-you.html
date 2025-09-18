@@ -33,8 +33,8 @@
         Your payment was processed. We’re baking your order now. A receipt has been emailed to you.
       </p>
 
-      <!-- shop.js populates this using localStorage (and can be extended to fetch SM REV session-summary) -->
-      <section id="thank-you-summary" class="card" style="padding:16px;"></section>
+      <!-- shop.js reads localStorage and calls /ensure-order-from-session; summary renders here if present -->
+      <section id="order-summary" class="card" style="padding:16px;"></section>
 
       <p style="margin-top:16px;">
         <a class="btn btn-primary" href="index.html">Back to Home</a>
@@ -51,9 +51,10 @@
   </footer>
 
   <!-- No inline scripts to satisfy CSP -->
-  <script src="js/config.js"></script>
-  <script src="js/utils.js"></script>
-  <script src="js/availability.js"></script>
-  <script src="js/shop.js"></script>
+  <script src="js/config.js" defer></script>
+  <script src="js/utils.js" defer></script>
+  <!-- availability not strictly needed here, but harmless; keep if utils expects it -->
+  <script src="js/availability.js" defer></script>
+  <script src="js/shop.js" defer></script>
 </body>
 </html>
