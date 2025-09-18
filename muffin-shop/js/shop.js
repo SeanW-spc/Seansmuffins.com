@@ -284,7 +284,7 @@
       if (!date){ toast('Please choose a delivery date'); $deliveryDate?.focus(); return; }
       if (!win){  toast('Please choose a delivery window'); $deliveryTime?.focus(); return; }
 
-      const need = cartItemsTotal() || 1;
+      const need = 1; // per-order capacity
 
       // 1) Quick “same base” & “same label” sanity check using the EXACT base used for checkout.
       const availUrl = apiUrl('/slot-availability') + '?date=' + encodeURIComponent(date);

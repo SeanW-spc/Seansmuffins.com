@@ -101,12 +101,9 @@
   // ---- cart qty (read from localStorage to avoid coupling) ----
   const CART_KEY = 'sm_cart_v1';
   function requestedQtyFromStorage(){
-    try {
-      const raw = localStorage.getItem(CART_KEY);
-      const arr = raw ? JSON.parse(raw) : [];
-      return Array.isArray(arr) ? arr.reduce((s,i)=> s + (parseInt(i?.quantity||0,10) || 0), 0) || 1 : 1;
-    } catch { return 1; }
-  }
+  // Capacity is per ORDER (one slot per checkout), not per item count.
+  return 1;
+}
 
   // ---- rebuild the <select> to mirror API-provided windows for the date ----
   function rebuildTimeOptions(selectEl, windowsList){
