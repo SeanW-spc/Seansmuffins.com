@@ -417,16 +417,28 @@
     // Rescue: ensure the Order row exists and Slot is confirmed.
     (async () => {
       try{
-        const r = await fetch(apiUrl('/ensure-order-from-session'), {
+        // Try POST first
+        let r = await fetch(apiUrl('/ensure-order-from-session'), {
           method:'POST',
           headers:{ 'Content-Type':'application/json' },
           body: JSON.stringify({ session_id: sessionId })
         });
-        const j = await r.json().catch(()=> ({}));
-        if (!r.ok){
-          console.warn('[SMREV] ensure-order-from-session failed', r.status, j);
+        let j = await r.json().catch(()=> ({}));
+
+        if (!r.ok || j?.ok === false){
+          console.warn('[SMREV] ensure-order-from-session POST failed', r.status, j);
+
+          // Fallback: GET ?session_id=...
+          const u = apiUrl(`/ensure-order-from-session?session_id=${encodeURIComponent(sessionId)}`);
+          r = await fetch(u, { method:'GET' });
+          j = await r.json().catch(()=> ({}));
+          if (!r.ok || j?.ok === false){
+            console.warn('[SMREV] ensure-order-from-session GET failed', r.status, j);
+          }else{
+            console.debug('[SMREV] ensure-order-from-session GET ok', j);
+          }
         }else{
-          console.debug('[SMREV] ensure-order-from-session', j);
+          console.debug('[SMREV] ensure-order-from-session POST ok', j);
         }
       }catch(e){
         console.warn('[SMREV] ensure-order-from-session error', e);
