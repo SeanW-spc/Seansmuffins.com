@@ -9,7 +9,7 @@ window.PRODUCT_PRICE_MAP = {
   VANILLA:   'price_1S4xbBEhhuIMCnYGTGHNfZhh',
   CHOCOLATE: 'price_1S4xZcEhhuIMCnYGcoPap88e',
   BANANA:    'price_1S4xXgEhhuIMCnYGYLabD3Yp',
-  PUMPKIN:   'price_1S4xW1EhhuIMCnYGqo4e87MS',
+  VARIETY_4:   'price_1S8ZFYEhhuIMCnYG7TTTZuOB',
   SUBSCRIPTION: 'price_1S4xTIEhhuIMCnYGJkLqyqCj'
 };
 
