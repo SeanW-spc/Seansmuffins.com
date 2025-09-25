@@ -1,5 +1,8 @@
 // ===== Backend (SM REV) =====
 // Always point to the SM-REV deployment (absolute URL).
+
+// ===== Stripe (client) =====
+window.STRIPE_PUBLISHABLE_KEY = 'pk_live_51S4aBEREXhAlHXGEibCVEAXiXtB3B3iGPVxZRS9Bjfxvq7x1qwOy54qWYLEHfiw5L1yNWjjzDQqN1WL4bXTBQ0Vh00u5L2bckP';
 window.SMREV_API_BASE = 'https://sm-rev.vercel.app/api';
 
 // Optional: allow overriding for previews/local testing via ?apiBase=https://... or localStorage("smrev_api_base")
