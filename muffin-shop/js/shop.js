@@ -274,113 +274,147 @@
     });
   }
 
-  on($cartCheckout, 'click', async () => {
-    try {
-      if (!cart.length){ toast('Your cart is empty'); return; }
-      const date    = $deliveryDate?.value || '';
-      const baseWin = selectedWindowBase();
-      const win     = expandHourToWindow(baseWin);
-      const notes   = ($orderNotes?.value || '').trim();
-      if (!date){ toast('Please choose a delivery date'); $deliveryDate?.focus(); return; }
-      if (!win){  toast('Please choose a delivery window'); $deliveryTime?.focus(); return; }
+ on($cartCheckout, 'click', async () => {
+  try {
+    if (!cart.length){ toast('Your cart is empty'); return; }
 
-      const need = 1; // per-order capacity
+    // Canonicalize window from the option's VALUE (already seeded from API)
+    const date  = $deliveryDate?.value || '';
+    const notes = ($orderNotes?.value || '').trim();
 
-      // 1) Quick “same base” & “same label” sanity check using the EXACT base used for checkout.
-      const availUrl = apiUrl('/slot-availability') + '?date=' + encodeURIComponent(date);
-      console.debug('[SMREV] Using API_BASE', API_BASE, { availUrl });
+    const opt = $deliveryTime?.selectedOptions?.[0];
+    let win = opt ? (opt.value || opt.textContent || '').trim() : '';
 
-      const avail = await fetch(availUrl, { cache: 'no-store' }).then(r => r.json()).catch(() => null);
-      const keys  = avail?.windows ? Object.keys(avail.windows) : [];
+    function normalizeWindowClient(raw){
+      if (!raw) return '';
+      let s = String(raw).trim();
+      // normalize hyphen/dash to EN–DASH and AM/PM spacing/case
+      s = s.replace(/\s*-\s*/g,'–').replace(/\s*–\s*/g,'–');
+      s = s.replace(/\s*(am|pm)\b/ig, m => ' ' + m.toUpperCase());
 
-      // If the selected label isn’t in the server’s current keys, refresh and ask user to reselect.
-      if (!keys.includes(win)) {
-        console.warn('[SMREV] Window mismatch just before checkout', { date, win, keys });
-        toast('Selected time just changed. Please reselect a time.');
-        refreshAvailability();
-        $deliveryTime?.focus();
-        return;
-      }
-
-      // 2) Capacity preflight for the selected quantity (belt & suspenders)
-      const ok = await preflightCapacity(date, win, need);
-      if (!ok){
-        toast('That delivery window is full for your quantity. Please pick another window.');
-        refreshAvailability();
-        $deliveryTime?.focus();
-        return;
-      }
-
-      const payload = {
-        mode: 'payment',
-        items: cart.map(i => ({ price: i.price, quantity: parseInt(i.quantity||1,10) || 1 })),
-        deliveryDate: date,
-        timeWindow: win,
-        orderNotes: notes || ''
-      };
-      console.debug('[SMREV] create-checkout-session → payload', { API_BASE, payload });
-
-      const resp = await fetch(apiUrl('/create-checkout-session'), {
-        method: 'POST',
-        headers: { 'Content-Type':'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      const raw = await resp.text();
-      let j = {}; try { j = raw ? JSON.parse(raw) : {}; } catch {}
-      if (!resp.ok){
-        let errCode = j?.error || 'checkout_failed';
-        const map = {
-          window_full: 'That delivery window is full. Please pick another window.',
-          capacity_full: 'That delivery window is full. Please pick another window.',
-          driver_full: 'All drivers are booked for that window. Please pick another window.',
-          invalid_window: 'Please choose a delivery window.',
-          invalid_date: 'Please choose a valid delivery date.',
-          subscription_disabled: 'Subscriptions are coming soon.',
-          method_not_allowed: 'Please refresh and try again.',
-          missing_fields: 'Please refresh and try again.',
-          invalid_price: 'That item is unavailable. Please refresh and try again.',
-          stripe_key_mismatch: 'Payment system mode mismatch. Please try again shortly.',
-          stripe_config: 'Payment system is being configured. Please try again shortly.',
-          stripe_error: 'Payment processor error. Please try again.',
-          slots_reservation_failed: 'Could not hold your delivery slot. Please try again in 30 seconds.',
-          checkout_failed: 'Checkout failed. Please try again.'
-        };
-        toast(map[errCode] || 'Checkout failed. Please try again.');
-        if (['window_full','capacity_full','slots_reservation_failed','driver_full'].includes(errCode)){
-          refreshAvailability();
+      // If it already looks like a range, try to recompose as "H:MM–H:MM AP"
+      if (s.includes('–')){
+        const re = /^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$/i;
+        let [a,b] = s.split('–').map(t => t.trim());
+        const ma = a.match(re), mb = b.match(re);
+        if (ma && mb){
+          const h1 = parseInt(ma[1],10), m1 = (ma[2]||'00').padStart(2,'0');
+          const h2 = parseInt(mb[1],10), m2 = (mb[2]||'00').padStart(2,'0');
+          const ap = (mb[3] || ma[3] || '').toUpperCase();
+          return `${h1}:${m1}–${h2}:${m2}${ap ? ' ' + ap : ''}`;
         }
-        return;
+      }
+      return s;
+    }
+    win = normalizeWindowClient(win);
+
+    if (!date){ toast('Please choose a delivery date'); $deliveryDate?.focus(); return; }
+    if (!win){  toast('Please choose a delivery window'); $deliveryTime?.focus(); return; }
+
+    // Double-check the selected window exists in today’s availability;
+    // If not, try to map by normalized equality; otherwise stop and refresh.
+    try{
+      const r = await fetch(apiUrl(`/slot-availability?date=${encodeURIComponent(date)}`), { cache:'no-store' });
+      const avail = r.ok ? await r.json() : null;
+      const keys = Object.keys(avail?.windows || {});
+      if (!keys.includes(win)){
+        const alt = keys.find(k => normalizeWindowClient(k) === win);
+        if (alt){ win = alt; }
+        else {
+          console.warn('[SMREV] Window mismatch just before checkout', { selected: win, keys });
+          toast('That delivery window just changed. Please re-select a time.');
+          refreshAvailability();
+          $deliveryTime?.focus();
+          return;
+        }
+      }
+    } catch { /* non-fatal */ }
+
+    // Capacity preflight is per-order (1), not per-item.
+    const need = 1;
+    const ok = await preflightCapacity(date, win, need);
+    if (!ok){
+      toast('That delivery window is full. Please pick another.');
+      refreshAvailability();
+      $deliveryTime?.focus();
+      return;
+    }
+
+    const payload = {
+      mode: 'payment',
+      items: cart.map(i => ({ price: i.price, quantity: parseInt(i.quantity||1,10) || 1 })),
+      deliveryDate: date,
+      timeWindow: win,
+      orderNotes: notes || ''
+    };
+
+    const resp = await fetch(apiUrl('/create-checkout-session'), {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const raw = await resp.text();
+    let j = {}; try { j = raw ? JSON.parse(raw) : {}; } catch {}
+
+    if (!resp.ok){
+      let errCode = j?.error || 'checkout_failed';
+
+      // Log helpful Stripe message (e.g., which price is invalid)
+      if (j?.detail?.message) {
+        console.error('[Checkout] Stripe detail:', j.detail.message);
       }
 
-      const { id, url } = j;
-
-      cart = []; saveCart(); renderCart(); updateCartBadge();
-
-      if (url){ window.location.href = url; return; }
-      if (!window.Stripe || !window.STRIPE_PUBLISHABLE_KEY){
-        if (id){ window.location.href = `/thank-you.html?session_id=${encodeURIComponent(id)}`; }
-        else throw new Error('missing_stripe_js');
-        return;
-      }
-      const stripe = window.Stripe(window.STRIPE_PUBLISHABLE_KEY);
-      const { error } = await stripe.redirectToCheckout({ sessionId: id });
-      if (error){ throw error; }
-    } catch (e){
-      console.error('Checkout error', e);
-      const msg = (e && e.message) ? e.message : '';
       const map = {
+        window_full: 'That delivery window is full. Please pick another window.',
+        capacity_full: 'That delivery window is full. Please pick another window.',
         driver_full: 'All drivers are booked for that window. Please pick another window.',
+        invalid_window: 'Please choose a delivery window.',
+        invalid_date: 'Please choose a valid delivery date.',
         subscription_disabled: 'Subscriptions are coming soon.',
+        method_not_allowed: 'Please refresh and try again.',
+        missing_fields: 'Please refresh and try again.',
         invalid_price: 'That item is unavailable. Please refresh and try again.',
         stripe_key_mismatch: 'Payment system mode mismatch. Please try again shortly.',
         stripe_config: 'Payment system is being configured. Please try again shortly.',
-        stripe_error: 'Payment processor error. Please try again.'
+        stripe_error: 'Payment processor error. Please try again.',
+        slots_reservation_failed: 'Could not hold your delivery slot. Please try again in 30 seconds.',
+        checkout_failed: 'Checkout failed. Please try again.'
       };
-      toast(map[msg] || 'Checkout failed. Please try again.');
+      toast(map[errCode] || j?.detail?.message || 'Checkout failed. Please try again.');
+      if (['window_full','capacity_full','slots_reservation_failed','driver_full'].includes(errCode)){
+        refreshAvailability();
+      }
+      return;
     }
-  });
 
+    const { id, url } = j;
+
+    cart = []; saveCart(); renderCart(); updateCartBadge();
+
+    if (url){ window.location.href = url; return; }
+    if (!window.Stripe || !window.STRIPE_PUBLISHABLE_KEY){
+      if (id){ window.location.href = `/thank-you.html?session_id=${encodeURIComponent(id)}`; }
+      else throw new Error('missing_stripe_js');
+      return;
+    }
+    const stripe = window.Stripe(window.STRIPE_PUBLISHABLE_KEY);
+    const { error } = await stripe.redirectToCheckout({ sessionId: id });
+    if (error){ throw error; }
+  } catch (e){
+    console.error('Checkout error', e);
+    const msg = (e && e.message) ? e.message : '';
+    const map = {
+      driver_full: 'All drivers are booked for that window. Please pick another window.',
+      subscription_disabled: 'Subscriptions are coming soon.',
+      invalid_price: 'That item is unavailable. Please refresh and try again.',
+      stripe_key_mismatch: 'Payment system mode mismatch. Please try again shortly.',
+      stripe_config: 'Payment system is being configured. Please try again shortly.',
+      stripe_error: 'Payment processor error. Please try again.'
+    };
+    toast(map[msg] || 'Checkout failed. Please try again.');
+  }
+});
   // Thank you page summary
   function renderThankYou(){
   const url = new URL(window.location.href);
