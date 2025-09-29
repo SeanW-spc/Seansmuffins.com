@@ -117,7 +117,7 @@
 
         <!-- Vanilla -->
         <article class="product card" id="vanilla">
-          <div class="thumb-wrap"><img loading="lazy" src="images/vanilla.jpg" alt="Vanilla Muffin" class="thumb-img"></div>
+          <div class="thumb-wrap"><img loading="lazy" src="/images/vanilla.jpg" alt="Vanilla Muffin" class="thumb-img"></div>
           <div class="product-info">
             <h3>Vanilla Muffin Box (4)</h3>
             <div class="price">$14.99</div>
@@ -256,14 +256,5 @@
   <script src="js/utils.js"></script>
   <script src="js/availability.js"></script>
   <script src="js/shop.js"></script>
-  <script>
-document.addEventListener('DOMContentLoaded', () => {
-  document.querySelectorAll('img').forEach(img => {
-    img.addEventListener('error', () => {
-      console.warn('Image failed to load:', img.src);
-    });
-  });
-});
-</script>
 </body>
 </html>
